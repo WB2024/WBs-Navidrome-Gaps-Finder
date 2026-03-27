@@ -66,38 +66,29 @@ Type in the filter box at the top to search for artists by name.
 
 ## Screenshots
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Navidrome Gaps Finder                                   │
-├──────────────────────────────────────────────────────────┤
-│  Type to filter artists…                                 │
-│                                                          │
-│  Artist                        │ MusicBrainz ID          │
-│  ─────────────────────────────────────────────────────── │
-│  2Pac                          │ 382f1005-e9ab-...       │
-│  Dr. Dre                       │ a1c7a95b-3615-...       │
-│  Nas                           │ 2f3f8fb1-e5dc-...       │
-│  Snoop Dogg                    │ f90e8b26-9e52-...       │
-│  ...                                                     │
-└──────────────────────────────────────────────────────────┘
-```
+### All Artists
 
-After selecting an artist:
+The main screen lists every artist in your Navidrome library that has a MusicBrainz ID, along with their corresponding MBID.
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  2Pac                                                    │
-│  7 in library · 12 missing                               │
-│                                                          │
-│  ✓ In Your Library       │  ✗ Missing from Library       │
-│  ──────────────────────  │  ─────────────────────────    │
-│  2Pacalypse Now          │  Thug Life: Volume 1          │
-│  All Eyez on Me          │  Until the End of Time        │
-│  Better Dayz             │  Loyal to the Game            │
-│  Me Against the World    │  Pac's Life                   │
-│  ...                     │  ...                          │
-└──────────────────────────────────────────────────────────┘
-```
+![All Artists](Screenshots/All%20Artists.png)
+
+### Filtering Artists
+
+Type in the filter box to narrow down the list in real time. Select an artist with the arrow keys and press Enter.
+
+![Artist Filter](Screenshots/Artist%20Filter.png)
+
+### Comparison View — Morrissey
+
+After selecting an artist, the app fetches their full discography from MusicBrainz and compares it against your library. The left panel shows what you already have; the right panel shows what's missing.
+
+![Artist Results — Morrissey](Screenshots/Artist%20Results%201.png)
+
+### Comparison View — Afroman
+
+Another example — here only 1 album is in the library, with 54 missing release groups listed on the right along with their type and first release date.
+
+![Artist Results — Afroman](Screenshots/Artist%20Results%202.png)
 
 ## Notes
 
