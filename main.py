@@ -218,7 +218,7 @@ class ComparisonScreen(Screen):
             if rg_id:
                 detail.update(
                     f"[dim]Release Group ID:[/] [bold]{rg_id}[/]  "
-                    f"[dim]([link=https://musicbrainz.org/release-group/{rg_id}]view on MusicBrainz[/link])[/]"
+                    f"[dim](https://musicbrainz.org/release-group/{rg_id})[/]"
                 )
             else:
                 detail.update("[dim]No MusicBrainz Release Group ID[/]")
