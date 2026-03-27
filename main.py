@@ -68,6 +68,25 @@ def get_local_albums(db_path: str, artist_id: str) -> list[tuple]:
         conn.close()
 
 
+def get_local_tracks(db_path: str, album_artist_id: str, album_name: str) -> list[tuple]:
+    """Return [(disc_number, track_number, title, duration, artist, suffix, bit_rate, sample_rate)] for an album."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT mf.disc_number, mf.track_number, mf.title, mf.duration, "
+            "mf.artist, mf.suffix, mf.bit_rate, mf.sample_rate "
+            "FROM media_file mf "
+            "JOIN album a ON mf.album_id = a.id "
+            "WHERE a.album_artist_id = ? AND a.name = ? "
+            "ORDER BY mf.disc_number, mf.track_number",
+            (album_artist_id, album_name),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # MusicBrainz API
 # ---------------------------------------------------------------------------
@@ -102,6 +121,64 @@ def fetch_release_groups(mbz_artist_id: str) -> list[dict]:
         time.sleep(1.1)  # respect MusicBrainz rate-limit (1 req/s)
 
     return all_groups
+
+
+def fetch_releases_for_group(release_group_id: str) -> list[dict]:
+    """Fetch all releases belonging to a release group."""
+    headers = {"User-Agent": MB_USER_AGENT, "Accept": "application/json"}
+    all_releases: list[dict] = []
+    offset = 0
+    limit = 100
+
+    while True:
+        resp = requests.get(
+            f"{MB_BASE}/release",
+            params={
+                "release-group": release_group_id,
+                "fmt": "json",
+                "limit": limit,
+                "offset": offset,
+            },
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        all_releases.extend(data.get("releases", []))
+
+        total = data.get("release-count", 0)
+        offset += limit
+        if offset >= total:
+            break
+        time.sleep(1.1)
+
+    return all_releases
+
+
+def fetch_release_tracks(release_id: str) -> list[dict]:
+    """Fetch the full track list for a specific release (inc=recordings)."""
+    headers = {"User-Agent": MB_USER_AGENT, "Accept": "application/json"}
+    resp = requests.get(
+        f"{MB_BASE}/release/{release_id}",
+        params={"inc": "recordings", "fmt": "json"},
+        headers=headers,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    tracks: list[dict] = []
+    for medium in data.get("media", []):
+        disc = medium.get("position", 1)
+        for track in medium.get("tracks", []):
+            rec = track.get("recording", {})
+            tracks.append({
+                "disc": disc,
+                "number": track.get("number", ""),
+                "title": track.get("title", "") or rec.get("title", ""),
+                "length": track.get("length") or rec.get("length"),
+            })
+    return tracks
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -286,6 +363,193 @@ class ComparisonScreen(Screen):
         ):
             mt.add_row(name, ftype, date, key=f"m{i}:{rg_id}")
 
+    @on(DataTable.RowSelected, "#owned-table")
+    def on_owned_selected(self, event: DataTable.RowSelected) -> None:
+        table = self.query_one("#owned-table", DataTable)
+        row = table.get_row(event.row_key)
+        album_name = row[0]
+        self.app.push_screen(
+            LocalTracksScreen(album_name, self.artist_name, self.artist_id)
+        )
+
+    @on(DataTable.RowSelected, "#missing-table")
+    def on_missing_selected(self, event: DataTable.RowSelected) -> None:
+        raw = str(event.row_key.value)
+        rg_id = raw.split(":", 1)[1] if ":" in raw else raw
+        if not rg_id:
+            return
+        table = self.query_one("#missing-table", DataTable)
+        row = table.get_row(event.row_key)
+        album_name = row[0]
+        self.app.push_screen(MBReleasesScreen(album_name, rg_id))
+
+
+class LocalTracksScreen(Screen):
+    """Show tracks for a local album from the Navidrome database."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def __init__(self, album_name: str, artist_name: str, artist_id: str):
+        super().__init__()
+        self.album_name = album_name
+        self.artist_name = artist_name
+        self.artist_id = artist_id
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="tracks-root"):
+            yield Static(
+                f"[bold]{self.artist_name}[/] — [italic]{self.album_name}[/]  [dim](Local)[/]",
+                id="tracks-title",
+            )
+            yield DataTable(id="tracks-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        config = load_config()
+        tracks = get_local_tracks(config["db_path"], self.artist_id, self.album_name)
+
+        table = self.query_one("#tracks-table", DataTable)
+        table.cursor_type = "row"
+        table.add_columns("Disc", "#", "Title", "Duration", "Artist", "Format", "Bitrate", "Sample Rate")
+        for disc, num, title, duration, artist, suffix, bitrate, sample_rate in tracks:
+            mins, secs = divmod(int(duration), 60)
+            dur_str = f"{mins}:{secs:02d}"
+            br_str = f"{bitrate} kbps" if bitrate else ""
+            sr_str = f"{sample_rate} Hz" if sample_rate else ""
+            table.add_row(
+                str(disc), str(num), title, dur_str, artist,
+                suffix.upper() if suffix else "", br_str, sr_str,
+            )
+
+
+class MBReleasesScreen(Screen):
+    """Show releases within a MusicBrainz release group and let the user pick one to see tracks."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def __init__(self, album_name: str, release_group_id: str):
+        super().__init__()
+        self.album_name = album_name
+        self.release_group_id = release_group_id
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="releases-root"):
+            yield Static(
+                f"[bold]{self.album_name}[/]  [dim](Select a release to view tracks)[/]",
+                id="releases-title",
+            )
+            yield LoadingIndicator(id="releases-loading")
+            yield DataTable(id="releases-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#releases-table").display = False
+        self.fetch_releases()
+
+    @work(thread=True)
+    def fetch_releases(self) -> None:
+        try:
+            releases = fetch_releases_for_group(self.release_group_id)
+        except Exception as exc:
+            self.app.call_from_thread(self._show_error, str(exc))
+            return
+        self.app.call_from_thread(self._show_releases, releases)
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#releases-loading").display = False
+        self.query_one("#releases-title", Static).update(f"[red]Error: {msg}[/]")
+
+    def _show_releases(self, releases: list[dict]) -> None:
+        self.query_one("#releases-loading").display = False
+        table = self.query_one("#releases-table", DataTable)
+        table.display = True
+        table.cursor_type = "row"
+        table.add_columns("Title", "Status", "Country", "Date", "Format", "Tracks")
+        for rel in sorted(releases, key=lambda r: r.get("date", "") or "9999"):
+            title = rel.get("title", "")
+            status = rel.get("status", "")
+            country = rel.get("country", "")
+            date = rel.get("date", "")
+            media = rel.get("media", [])
+            formats = ", ".join({m.get("format", "?") for m in media if m.get("format")})
+            track_count = sum(m.get("track-count", 0) for m in media)
+            table.add_row(
+                title, status, country, date, formats, str(track_count),
+                key=rel.get("id", ""),
+            )
+
+    @on(DataTable.RowSelected, "#releases-table")
+    def on_release_selected(self, event: DataTable.RowSelected) -> None:
+        release_id = str(event.row_key.value)
+        if not release_id:
+            return
+        table = self.query_one("#releases-table", DataTable)
+        row = table.get_row(event.row_key)
+        release_title = row[0]
+        self.app.push_screen(MBTracksScreen(release_title, release_id))
+
+
+class MBTracksScreen(Screen):
+    """Show tracks for a specific MusicBrainz release."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def __init__(self, release_title: str, release_id: str):
+        super().__init__()
+        self.release_title = release_title
+        self.release_id = release_id
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="mb-tracks-root"):
+            yield Static(
+                f"[bold]{self.release_title}[/]  [dim](MusicBrainz)[/]",
+                id="mb-tracks-title",
+            )
+            yield LoadingIndicator(id="mb-tracks-loading")
+            yield DataTable(id="mb-tracks-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#mb-tracks-table").display = False
+        self.fetch_tracks()
+
+    @work(thread=True)
+    def fetch_tracks(self) -> None:
+        try:
+            tracks = fetch_release_tracks(self.release_id)
+        except Exception as exc:
+            self.app.call_from_thread(self._show_error, str(exc))
+            return
+        self.app.call_from_thread(self._show_tracks, tracks)
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#mb-tracks-loading").display = False
+        self.query_one("#mb-tracks-title", Static).update(f"[red]Error: {msg}[/]")
+
+    def _show_tracks(self, tracks: list[dict]) -> None:
+        self.query_one("#mb-tracks-loading").display = False
+        table = self.query_one("#mb-tracks-table", DataTable)
+        table.display = True
+        table.cursor_type = "row"
+        table.add_columns("Disc", "#", "Title", "Duration")
+        for t in tracks:
+            length = t.get("length")
+            if length:
+                total_secs = int(length) // 1000
+                mins, secs = divmod(total_secs, 60)
+                dur_str = f"{mins}:{secs:02d}"
+            else:
+                dur_str = "?"
+            table.add_row(
+                str(t.get("disc", "")),
+                str(t.get("number", "")),
+                t.get("title", ""),
+                dur_str,
+            )
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Main app
@@ -351,6 +615,16 @@ class NavidromeGapsApp(App):
         margin: 0 1;
         height: auto;
         max-height: 2;
+    }
+    #tracks-root, #releases-root, #mb-tracks-root {
+        height: 1fr;
+    }
+    #tracks-title, #releases-title, #mb-tracks-title {
+        margin: 1 1 1 1;
+    }
+    #tracks-table, #releases-table, #mb-tracks-table {
+        height: 1fr;
+        margin: 0 1;
     }
     """
 
