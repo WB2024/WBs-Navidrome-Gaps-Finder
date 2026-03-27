@@ -199,11 +199,21 @@ class ComparisonScreen(Screen):
                         "[bold red]✗ Missing from Library[/]", classes="table-heading"
                     )
                     yield DataTable(id="missing-table")
+            yield Static("", id="comp-detail")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#comp-tables").display = False
+        self.query_one("#comp-detail").display = False
         self.do_comparison()
+
+    @on(DataTable.RowHighlighted)
+    def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.row_key and event.row_key.value:
+            rg_id = str(event.row_key.value)
+            detail = self.query_one("#comp-detail", Static)
+            detail.display = True
+            detail.update(f"[dim]Release Group ID:[/] [bold]{rg_id}[/]")
 
     @work(thread=True)
     def do_comparison(self) -> None:
@@ -221,14 +231,14 @@ class ComparisonScreen(Screen):
             self.app.call_from_thread(self._show_error, str(exc))
             return
 
-        # Build owned list from local albums
-        owned: list[tuple[str, str, str]] = []
-        for name, atype, year, _rg_id in local:
+        # Build owned list from local albums (include rg_id as row key)
+        owned: list[tuple[str, str, str, str]] = []
+        for name, atype, year, rg_id in local:
             year_str = str(year) if year else ""
-            owned.append((name, atype or "", year_str))
+            owned.append((name, atype or "", year_str, rg_id or ""))
 
         # Build missing list from MusicBrainz release groups not found locally
-        missing: list[tuple[str, str, str]] = []
+        missing: list[tuple[str, str, str, str]] = []
         for rg in release_groups:
             rg_id = rg.get("id", "")
             if rg_id not in local_rg_ids:
@@ -239,7 +249,7 @@ class ComparisonScreen(Screen):
                 if stypes:
                     full_type += " + " + ", ".join(stypes)
                 date = rg.get("first-release-date", "") or ""
-                missing.append((title, full_type, date))
+                missing.append((title, full_type, date, rg_id))
 
         self.app.call_from_thread(self._show_results, owned, missing)
 
@@ -255,14 +265,16 @@ class ComparisonScreen(Screen):
         self.query_one("#comp-tables").display = True
 
         ot = self.query_one("#owned-table", DataTable)
+        ot.cursor_type = "row"
         ot.add_columns("Album", "Type", "Year")
-        for row in owned:
-            ot.add_row(*row)
+        for name, atype, year, rg_id in owned:
+            ot.add_row(name, atype, year, key=rg_id or None)
 
         mt = self.query_one("#missing-table", DataTable)
+        mt.cursor_type = "row"
         mt.add_columns("Album", "Type", "Date")
-        for row in sorted(missing, key=lambda r: r[2] or "9999"):
-            mt.add_row(*row)
+        for name, ftype, date, rg_id in sorted(missing, key=lambda r: r[2] or "9999"):
+            mt.add_row(name, ftype, date, key=rg_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -324,6 +336,11 @@ class NavidromeGapsApp(App):
     }
     #owned-table, #missing-table {
         height: 1fr;
+    }
+    #comp-detail {
+        margin: 0 1;
+        height: auto;
+        max-height: 2;
     }
     """
 
