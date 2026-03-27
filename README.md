@@ -42,7 +42,15 @@ source venv/bin/activate        # Linux / macOS
 python main.py
 ```
 
-On first launch, the app will prompt you for the path to your Navidrome database file. This is saved to `config.json` for future runs.
+You can also pass the database path directly via the command line to skip the interactive prompt:
+
+```bash
+python main.py --db /path/to/navidrome.db
+```
+
+On first launch (without `--db`), the app will prompt you for the path to your Navidrome database file. This is saved to `config.json` for future runs.
+
+> **Tip:** If you can't paste into the TUI input field, use `Shift+Insert` or right-click instead of `Ctrl+V`. Alternatively, use the `--db` flag shown above.
 
 ### Key Bindings
 

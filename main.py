@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Navidrome Gaps Finder - Find missing albums in your Navidrome music library."""
 
+import argparse
 import json
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -116,10 +118,11 @@ class SetupScreen(Screen):
         with Vertical(id="setup-box"):
             yield Static(
                 "Welcome to [bold]Navidrome Gaps Finder[/]!\n\n"
-                "Enter the full path to your Navidrome database file:",
+                "Enter the full path to your Navidrome database file:\n"
+                "[dim](Tip: use Shift+Insert or right-click to paste in most terminals)[/]",
                 id="setup-prompt",
             )
-            yield Input(placeholder=r"C:\path\to\navidrome.db", id="db-input")
+            yield Input(placeholder="/path/to/navidrome.db", id="db-input")
             yield Static("", id="setup-error")
         yield Footer()
 
@@ -276,6 +279,11 @@ class NavidromeGapsApp(App):
         Binding("s", "setup", "Change DB Path"),
     ]
 
+    def __init__(self, db_path: str | None = None):
+        super().__init__()
+        self.artists: list[tuple] = []
+        self._cli_db_path = db_path
+
     CSS = """
     #setup-box {
         margin: 2 4;
@@ -319,10 +327,6 @@ class NavidromeGapsApp(App):
     }
     """
 
-    def __init__(self):
-        super().__init__()
-        self.artists: list[tuple] = []
-
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical():
@@ -331,6 +335,16 @@ class NavidromeGapsApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # If a path was supplied via CLI, save it and skip the setup screen
+        if self._cli_db_path:
+            p = Path(self._cli_db_path)
+            if p.is_file():
+                config = load_config()
+                config["db_path"] = str(p.resolve())
+                save_config(config)
+                self._load_artists()
+                return
+
         config = load_config()
         db_path = config.get("db_path", "")
         if not db_path or not Path(db_path).exists():
@@ -374,5 +388,16 @@ class NavidromeGapsApp(App):
         self.push_screen(SetupScreen(), callback=self._on_setup)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Navidrome Gaps Finder")
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        help="Path to the Navidrome database file (navidrome.db)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    NavidromeGapsApp().run()
+    args = parse_args()
+    NavidromeGapsApp(db_path=args.db).run()
