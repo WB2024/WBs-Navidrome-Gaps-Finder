@@ -210,10 +210,18 @@ class ComparisonScreen(Screen):
     @on(DataTable.RowHighlighted)
     def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.row_key and event.row_key.value:
-            rg_id = str(event.row_key.value)
+            # Row keys are stored as "idx:rg_id" to guarantee uniqueness
+            raw = str(event.row_key.value)
+            rg_id = raw.split(":", 1)[1] if ":" in raw else raw
             detail = self.query_one("#comp-detail", Static)
             detail.display = True
-            detail.update(f"[dim]Release Group ID:[/] [bold]{rg_id}[/]")
+            if rg_id:
+                detail.update(
+                    f"[dim]Release Group ID:[/] [bold]{rg_id}[/]  "
+                    f"[dim]([link=https://musicbrainz.org/release-group/{rg_id}]view on MusicBrainz[/link])[/]"
+                )
+            else:
+                detail.update("[dim]No MusicBrainz Release Group ID[/]")
 
     @work(thread=True)
     def do_comparison(self) -> None:
@@ -267,14 +275,16 @@ class ComparisonScreen(Screen):
         ot = self.query_one("#owned-table", DataTable)
         ot.cursor_type = "row"
         ot.add_columns("Album", "Type", "Year")
-        for name, atype, year, rg_id in owned:
-            ot.add_row(name, atype, year, key=rg_id or None)
+        for i, (name, atype, year, rg_id) in enumerate(owned):
+            ot.add_row(name, atype, year, key=f"{i}:{rg_id}")
 
         mt = self.query_one("#missing-table", DataTable)
         mt.cursor_type = "row"
         mt.add_columns("Album", "Type", "Date")
-        for name, ftype, date, rg_id in sorted(missing, key=lambda r: r[2] or "9999"):
-            mt.add_row(name, ftype, date, key=rg_id)
+        for i, (name, ftype, date, rg_id) in enumerate(
+            sorted(missing, key=lambda r: r[2] or "9999")
+        ):
+            mt.add_row(name, ftype, date, key=f"m{i}:{rg_id}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
