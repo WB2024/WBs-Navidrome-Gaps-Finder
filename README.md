@@ -22,14 +22,23 @@ A terminal UI application that helps you discover missing albums in your [Navidr
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/WBs-Navidrome-Gaps-Finder.git
+git clone https://github.com/WB2024/WBs-Navidrome-Gaps-Finder.git
 cd WBs-Navidrome-Gaps-Finder
+python3 -m venv venv
+source venv/bin/activate        # Linux / macOS
+# venv\Scripts\activate         # Windows
 pip install -r requirements.txt
 ```
+
+> **Note:** On modern Debian/Ubuntu systems, installing packages globally with `pip` is blocked ([PEP 668](https://peps.python.org/pep-0668/)). Using a virtual environment as shown above is the recommended approach.
 
 ## Usage
 
 ```bash
+# Make sure the venv is activated first
+source venv/bin/activate        # Linux / macOS
+# venv\Scripts\activate         # Windows
+
 python main.py
 ```
 
