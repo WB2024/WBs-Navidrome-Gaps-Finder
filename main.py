@@ -2,6 +2,7 @@
 """Navidrome Gaps Finder - Find missing albums in your Navidrome music library."""
 
 import argparse
+import ast
 import csv
 import json
 import sqlite3
@@ -86,6 +87,59 @@ def get_local_tracks(db_path: str, album_artist_id: str, album_name: str) -> lis
         return cur.fetchall()
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Nicotine+ config helpers
+# ---------------------------------------------------------------------------
+
+def read_nicotine_autosearch(config_dir: str) -> list[str]:
+    """Read the autosearch wishlist from a Nicotine+ config file."""
+    config_file = Path(config_dir) / "config"
+    if not config_file.exists():
+        return []
+    text = config_file.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("autosearch"):
+            _, _, value = stripped.partition("=")
+            value = value.strip()
+            try:
+                result = ast.literal_eval(value)
+                if isinstance(result, list):
+                    return [str(item) for item in result]
+            except (ValueError, SyntaxError):
+                pass
+            return []
+    return []
+
+
+def write_nicotine_autosearch(config_dir: str, items: list[str]) -> None:
+    """Write the autosearch wishlist to a Nicotine+ config file."""
+    config_file = Path(config_dir) / "config"
+    text = config_file.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    new_value = repr(items)
+    found = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith("autosearch"):
+            ending = "\n"
+            if line.endswith("\r\n"):
+                ending = "\r\n"
+            elif not line.endswith("\n"):
+                ending = ""
+            lines[i] = f"autosearch = {new_value}{ending}"
+            found = True
+            break
+    if not found:
+        for i, line in enumerate(lines):
+            if line.strip() == "[server]":
+                ending = "\n"
+                if line.endswith("\r\n"):
+                    ending = "\r\n"
+                lines.insert(i + 1, f"autosearch = {new_value}{ending}")
+                break
+    config_file.write_text("".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -247,12 +301,63 @@ class SetupScreen(Screen):
         self.dismiss(True)
 
 
+class NicotineSetupScreen(Screen):
+    """Prompt the user for the Nicotine+ config directory path (optional)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel / Skip")]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="nic-setup-box"):
+            yield Static(
+                "[bold]Nicotine+ Integration[/] [dim](optional)[/]\n\n"
+                "Enter the path to your Nicotine+ config folder\n"
+                "(the directory containing the [bold]config[/] file):\n"
+                "[dim](Press Escape to skip)[/]",
+                id="nic-setup-prompt",
+            )
+            yield Input(placeholder="/path/to/nicotine/config/folder", id="nic-input")
+            yield Static("", id="nic-setup-error")
+        yield Footer()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Input.Submitted, "#nic-input")
+    def submit_path(self, event: Input.Submitted) -> None:
+        path = event.value.strip().strip('"').strip("'")
+        err = self.query_one("#nic-setup-error", Static)
+
+        if not path:
+            err.update("[red]Please enter a path or press Escape to skip.[/]")
+            return
+
+        p = Path(path)
+        if not p.exists():
+            err.update(f"[red]Directory not found: {path}[/]")
+            return
+        if not p.is_dir():
+            err.update(f"[red]Not a directory: {path}[/]")
+            return
+
+        config_file = p / "config"
+        if not config_file.exists():
+            err.update(f"[red]No 'config' file found in {path}[/]")
+            return
+
+        config = load_config()
+        config["nicotine_config_path"] = str(p.resolve())
+        save_config(config)
+        self.dismiss(True)
+
+
 class ComparisonScreen(Screen):
     """Show albums in the library vs. missing from MusicBrainz."""
 
     BINDINGS = [
         Binding("escape", "app.pop_screen", "Back"),
         Binding("e", "export_csv", "Export CSV"),
+        Binding("w", "add_to_wishlist", "Wishlist"),
     ]
 
     def __init__(self, artist_name: str, artist_id: str, mbz_artist_id: str):
@@ -411,6 +516,35 @@ class ComparisonScreen(Screen):
         row = table.get_row(event.row_key)
         album_name = row[0]
         self.app.push_screen(MBReleasesScreen(album_name, rg_id))
+
+    def action_add_to_wishlist(self) -> None:
+        """Open the wishlist selection screen for missing albums."""
+        if not self._missing_data:
+            return
+        config = load_config()
+        nic_path = config.get("nicotine_config_path", "")
+        if not nic_path:
+            self.app.push_screen(NicotineSetupScreen(), callback=self._on_nicotine_setup)
+        else:
+            self.app.push_screen(
+                WishlistScreen(self.artist_name, self._missing_data),
+                callback=self._on_wishlist_done,
+            )
+
+    def _on_nicotine_setup(self, result) -> None:
+        if result:
+            self.app.push_screen(
+                WishlistScreen(self.artist_name, self._missing_data),
+                callback=self._on_wishlist_done,
+            )
+
+    def _on_wishlist_done(self, added) -> None:
+        if added is not None and added > 0:
+            self.query_one("#comp-status").update(
+                f"[green]{self._owned_count}[/] in library · "
+                f"[red]{len(self._missing_data)}[/] missing · "
+                f"[bold cyan]Added {added} album(s) to Nicotine+ wishlist[/]"
+            )
 
 
 class LocalTracksScreen(Screen):
@@ -580,6 +714,102 @@ class MBTracksScreen(Screen):
             )
 
 
+class WishlistScreen(Screen):
+    """Select missing albums to add to Nicotine+ wishlist."""
+
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "Back"),
+        Binding("space", "toggle_selection", "Toggle"),
+        Binding("a", "select_all", "Select All"),
+        Binding("enter", "confirm", "Add to Wishlist"),
+    ]
+
+    def __init__(self, artist_name: str, missing_albums: list[tuple[str, str, str, str]]):
+        super().__init__()
+        self.artist_name = artist_name
+        self.missing_albums = missing_albums
+        self.selected: set[int] = set()
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="wishlist-root"):
+            yield Static(
+                f"[bold]{self.artist_name}[/] — [italic]Add to Nicotine+ Wishlist[/]",
+                id="wishlist-title",
+            )
+            yield Static(
+                "[dim]Space[/] toggle · [dim]A[/] select all · [dim]Enter[/] confirm",
+                id="wishlist-hint",
+            )
+            yield DataTable(id="wishlist-table")
+            yield Static("", id="wishlist-status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#wishlist-table", DataTable)
+        table.cursor_type = "row"
+        table.add_column("\u2713", key="check")
+        table.add_columns("Album", "Type", "Date")
+        for i, (name, ftype, date, rg_id) in enumerate(self.missing_albums):
+            table.add_row("", name, ftype, date, key=str(i))
+        self._update_status()
+
+    def _update_status(self) -> None:
+        self.query_one("#wishlist-status", Static).update(
+            f"[cyan]{len(self.selected)}[/] of [bold]{len(self.missing_albums)}[/] selected"
+        )
+
+    def _refresh_check(self, index: int) -> None:
+        table = self.query_one("#wishlist-table", DataTable)
+        mark = "\u2713" if index in self.selected else ""
+        table.update_cell(str(index), "check", mark)
+
+    def action_toggle_selection(self) -> None:
+        table = self.query_one("#wishlist-table", DataTable)
+        cursor_row = table.cursor_row
+        if cursor_row < 0 or cursor_row >= len(self.missing_albums):
+            return
+        if cursor_row in self.selected:
+            self.selected.discard(cursor_row)
+        else:
+            self.selected.add(cursor_row)
+        self._refresh_check(cursor_row)
+        self._update_status()
+
+    def action_select_all(self) -> None:
+        if len(self.selected) == len(self.missing_albums):
+            self.selected.clear()
+        else:
+            self.selected = set(range(len(self.missing_albums)))
+        for i in range(len(self.missing_albums)):
+            self._refresh_check(i)
+        self._update_status()
+
+    def action_confirm(self) -> None:
+        if not self.selected:
+            self.query_one("#wishlist-status", Static).update(
+                "[yellow]No albums selected.[/]"
+            )
+            return
+
+        config = load_config()
+        nic_path = config.get("nicotine_config_path", "")
+        existing = read_nicotine_autosearch(nic_path)
+        existing_lower = {item.lower() for item in existing}
+
+        added = 0
+        for idx in sorted(self.selected):
+            album_name = self.missing_albums[idx][0]
+            search_term = f"{self.artist_name} - {album_name}"
+            if search_term.lower() not in existing_lower:
+                existing.append(search_term)
+                existing_lower.add(search_term.lower())
+                added += 1
+
+        write_nicotine_autosearch(nic_path, existing)
+        self.dismiss(added)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main app
 # ═══════════════════════════════════════════════════════════════════════════
@@ -592,6 +822,7 @@ class NavidromeGapsApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("s", "setup", "Change DB Path"),
+        Binding("n", "nicotine_setup", "Nicotine+ Config"),
     ]
 
     def __init__(self, db_path: str | None = None):
@@ -655,6 +886,33 @@ class NavidromeGapsApp(App):
         height: 1fr;
         margin: 0 1;
     }
+    #nic-setup-box {
+        margin: 2 4;
+        max-width: 100;
+    }
+    #nic-setup-prompt {
+        margin-bottom: 1;
+    }
+    #nic-setup-error {
+        margin-top: 1;
+    }
+    #wishlist-root {
+        height: 1fr;
+    }
+    #wishlist-title {
+        margin: 1 1 0 1;
+    }
+    #wishlist-hint {
+        margin: 0 1 1 1;
+    }
+    #wishlist-table {
+        height: 1fr;
+        margin: 0 1;
+    }
+    #wishlist-status {
+        margin: 0 1;
+        height: auto;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -716,6 +974,9 @@ class NavidromeGapsApp(App):
 
     def action_setup(self) -> None:
         self.push_screen(SetupScreen(), callback=self._on_setup)
+
+    def action_nicotine_setup(self) -> None:
+        self.push_screen(NicotineSetupScreen())
 
 
 def parse_args() -> argparse.Namespace:

@@ -14,6 +14,7 @@ A terminal UI application that helps you discover missing albums in your [Navidr
 4. **Compares** MusicBrainz release groups against your local library using `mbz_release_group_id`
 5. **Displays** a side-by-side view of albums you own vs. albums you're missing
 6. **Inspect tracks** for any album — view your local tracklist with full audio details, or browse MusicBrainz releases and their tracks
+7. **Optionally integrates** with [Nicotine+](https://nicotine-plus.org/) — add missing albums directly to your Soulseek wishlist
 
 ## Requirements
 
@@ -59,8 +60,12 @@ On first launch (without `--db`), the app will prompt you for the path to your N
 |-----------|--------------------------------------------------|
 | `↑` / `↓` | Navigate the artist/album list                   |
 | `Enter`   | Select an artist / inspect album tracks          |
+| `Space`   | Toggle album selection (wishlist screen)          |
 | `Escape`  | Go back                                          |
 | `e`       | Export missing albums to CSV (comparison screen)  |
+| `w`       | Add missing albums to Nicotine+ wishlist          |
+| `a`       | Select / deselect all (wishlist screen)           |
+| `n`       | Configure Nicotine+ config path                  |
 | `s`       | Change database path                             |
 | `q`       | Quit                                             |
 
@@ -121,6 +126,29 @@ While viewing the comparison screen for an artist, press `e` to export all missi
 | Type               | Release group type (e.g. Album, Single, EP)  |
 | First Release Date | Earliest known release date from MusicBrainz |
 | MusicBrainz URL    | Direct link to the release group page        |
+
+## Nicotine+ Integration (Optional)
+
+If you use [Nicotine+](https://nicotine-plus.org/) (a Soulseek client), you can add missing albums directly to your Nicotine+ wishlist (auto-search list).
+
+### Setup
+
+Press `n` at any time to configure the path to your Nicotine+ config folder — the directory that contains the `config` file (no extension). This is typically:
+
+- **Linux:** `~/.config/nicotine/` or your Docker/container config mount
+- **Windows:** `%APPDATA%\nicotine\`
+
+This setting is optional and saved to `config.json`. The rest of the app works without it.
+
+### Adding to Wishlist
+
+1. View the comparison screen for any artist
+2. Press `w` to open the wishlist selection screen (if Nicotine+ isn't configured yet, you'll be prompted)
+3. Use `Space` to toggle individual albums, or `a` to select/deselect all
+4. Press `Enter` to confirm — selected albums are added to the `autosearch` list in your Nicotine+ config as `"Artist - Album"` search terms
+5. Duplicates are automatically skipped
+
+> **Note:** If Nicotine+ is running when you update the wishlist, you may need to restart it for the changes to take effect.
 
 ## Notes
 
