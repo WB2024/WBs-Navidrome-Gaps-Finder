@@ -56,6 +56,35 @@ def get_artists(db_path: str) -> list[tuple]:
         conn.close()
 
 
+def get_artists_without_mbid(db_path: str) -> list[tuple]:
+    """Return [(navidrome_id, name)] for artists without a MusicBrainz ID."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, name FROM artist "
+            "WHERE mbz_artist_id = '' OR mbz_artist_id IS NULL "
+            "ORDER BY sort_artist_name"
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def set_artist_mbid(db_path: str, artist_id: str, mbz_artist_id: str) -> None:
+    """Update the MusicBrainz artist ID for a given artist."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE artist SET mbz_artist_id = ? WHERE id = ?",
+            (mbz_artist_id, artist_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_local_albums(db_path: str, artist_id: str) -> list[tuple]:
     """Return [(name, type, year, mbz_release_group_id)] for an artist's albums."""
     conn = sqlite3.connect(db_path)
@@ -235,6 +264,19 @@ def fetch_release_tracks(release_id: str) -> list[dict]:
                 "length": track.get("length") or rec.get("length"),
             })
     return tracks
+
+
+def search_musicbrainz_artists(query: str) -> list[dict]:
+    """Search the MusicBrainz API for artists matching the query."""
+    headers = {"User-Agent": MB_USER_AGENT, "Accept": "application/json"}
+    resp = requests.get(
+        f"{MB_BASE}/artist",
+        params={"query": query, "fmt": "json", "limit": 25},
+        headers=headers,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("artists", [])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -874,6 +916,173 @@ class WishlistScreen(Screen):
         )
 
 
+class UntaggedArtistsScreen(Screen):
+    """List artists without a MusicBrainz ID and allow tagging them."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="untagged-root"):
+            yield Static(
+                "[bold]Artists Missing MusicBrainz IDs[/]",
+                id="untagged-title",
+            )
+            yield Input(placeholder="Type to filter…", id="untagged-filter")
+            yield DataTable(id="untagged-table")
+            yield Static("", id="untagged-status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        config = load_config()
+        self._db_path = config["db_path"]
+        self._artists = get_artists_without_mbid(self._db_path)
+        self._refresh_table()
+
+    def _refresh_table(self, filter_text: str = "") -> None:
+        table = self.query_one("#untagged-table", DataTable)
+        table.clear(columns=True)
+        table.cursor_type = "row"
+        table.add_columns("Artist")
+        ft = filter_text.lower()
+        for nid, name in self._artists:
+            if ft and ft not in name.lower():
+                continue
+            table.add_row(name, key=nid)
+        self.query_one("#untagged-status", Static).update(
+            f"[dim]{len(self._artists)} artist(s) without MusicBrainz IDs[/]"
+        )
+
+    @on(Input.Changed, "#untagged-filter")
+    def on_filter(self, event: Input.Changed) -> None:
+        self._refresh_table(event.value)
+
+    @on(DataTable.RowSelected, "#untagged-table")
+    def on_artist_selected(self, event: DataTable.RowSelected) -> None:
+        table = self.query_one("#untagged-table", DataTable)
+        row = table.get_row(event.row_key)
+        artist_name = row[0]
+        artist_id = str(event.row_key.value)
+        self.app.push_screen(
+            MBArtistSearchScreen(artist_name, artist_id, self._db_path),
+            callback=self._on_tagged,
+        )
+
+    def _on_tagged(self, result) -> None:
+        if result:
+            self._artists = get_artists_without_mbid(self._db_path)
+            self._refresh_table(
+                self.query_one("#untagged-filter", Input).value
+            )
+            self.query_one("#untagged-status", Static).update(
+                f"[green]MusicBrainz ID applied![/]  "
+                f"[dim]{len(self._artists)} artist(s) remaining[/]"
+            )
+
+
+class MBArtistSearchScreen(Screen):
+    """Search MusicBrainz for an artist and let the user pick the correct match."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def __init__(self, artist_name: str, artist_id: str, db_path: str):
+        super().__init__()
+        self.artist_name = artist_name
+        self.artist_id = artist_id
+        self.db_path = db_path
+        self._results: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="mb-search-root"):
+            yield Static(
+                f"Searching MusicBrainz for [bold]{self.artist_name}[/]…",
+                id="mb-search-title",
+            )
+            yield LoadingIndicator(id="mb-search-loading")
+            yield DataTable(id="mb-search-table")
+            yield Static("", id="mb-search-detail")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#mb-search-table").display = False
+        self.query_one("#mb-search-detail").display = False
+        self.do_search()
+
+    @work(thread=True)
+    def do_search(self) -> None:
+        try:
+            results = search_musicbrainz_artists(self.artist_name)
+        except Exception as exc:
+            self.app.call_from_thread(self._show_error, str(exc))
+            return
+        self.app.call_from_thread(self._show_results, results)
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#mb-search-loading").display = False
+        self.query_one("#mb-search-title", Static).update(f"[red]Error: {msg}[/]")
+
+    def _show_results(self, results: list[dict]) -> None:
+        self.query_one("#mb-search-loading").display = False
+        self._results = results
+
+        if not results:
+            self.query_one("#mb-search-title", Static).update(
+                f"No MusicBrainz results for [bold]{self.artist_name}[/]"
+            )
+            return
+
+        self.query_one("#mb-search-title", Static).update(
+            f"[bold]{self.artist_name}[/] — [dim]Select the correct artist[/]"
+        )
+
+        table = self.query_one("#mb-search-table", DataTable)
+        table.display = True
+        table.cursor_type = "row"
+        table.add_columns("Score", "Name", "Disambiguation", "Type", "Country", "Active")
+        for i, art in enumerate(results):
+            score = str(art.get("score", ""))
+            name = art.get("name", "")
+            disamb = art.get("disambiguation", "")
+            atype = art.get("type", "")
+            country = art.get("country", "")
+            begin = art.get("life-span", {}).get("begin", "")
+            end = art.get("life-span", {}).get("end", "")
+            ended = art.get("life-span", {}).get("ended", False)
+            active = ""
+            if begin:
+                active = f"{begin} – "
+                active += end if end else ("present" if not ended else "?")
+            table.add_row(score, name, disamb, atype, country, active, key=str(i))
+
+    @on(DataTable.RowHighlighted, "#mb-search-table")
+    def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.row_key and event.row_key.value is not None:
+            idx = int(event.row_key.value)
+            if 0 <= idx < len(self._results):
+                art = self._results[idx]
+                mbid = art.get("id", "")
+                detail = self.query_one("#mb-search-detail", Static)
+                detail.display = True
+                tags = ", ".join(t.get("name", "") for t in art.get("tags", [])[:5])
+                parts = [f"[dim]MBID:[/] [bold]{mbid}[/]"]
+                if tags:
+                    parts.append(f"[dim]Tags:[/] {tags}")
+                detail.update("  ".join(parts))
+
+    @on(DataTable.RowSelected, "#mb-search-table")
+    def on_result_selected(self, event: DataTable.RowSelected) -> None:
+        idx = int(event.row_key.value)
+        if idx < 0 or idx >= len(self._results):
+            return
+        art = self._results[idx]
+        mbid = art.get("id", "")
+        if not mbid:
+            return
+        set_artist_mbid(self.db_path, self.artist_id, mbid)
+        self.dismiss(True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main app
 # ═══════════════════════════════════════════════════════════════════════════
@@ -887,6 +1096,7 @@ class NavidromeGapsApp(App):
         Binding("q", "quit", "Quit"),
         Binding("s", "setup", "Change DB Path"),
         Binding("n", "nicotine_setup", "Nicotine+ Config"),
+        Binding("u", "untagged", "Untagged Artists"),
     ]
 
     def __init__(self, db_path: str | None = None):
@@ -981,6 +1191,38 @@ class NavidromeGapsApp(App):
         margin: 0 1;
         height: auto;
     }
+    #untagged-root {
+        height: 1fr;
+    }
+    #untagged-title {
+        margin: 1 1 0 1;
+    }
+    #untagged-filter {
+        margin: 0 1;
+    }
+    #untagged-table {
+        height: 1fr;
+        margin: 0 1;
+    }
+    #untagged-status {
+        margin: 0 1;
+        height: auto;
+    }
+    #mb-search-root {
+        height: 1fr;
+    }
+    #mb-search-title {
+        margin: 1 1 1 1;
+    }
+    #mb-search-table {
+        height: 1fr;
+        margin: 0 1;
+    }
+    #mb-search-detail {
+        margin: 0 1;
+        height: auto;
+        max-height: 2;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -1045,6 +1287,18 @@ class NavidromeGapsApp(App):
 
     def action_nicotine_setup(self) -> None:
         self.push_screen(NicotineSetupScreen())
+
+    def action_untagged(self) -> None:
+        config = load_config()
+        if not config.get("db_path"):
+            return
+        self.push_screen(
+            UntaggedArtistsScreen(),
+            callback=self._on_untagged_return,
+        )
+
+    def _on_untagged_return(self, result) -> None:
+        self._load_artists()
 
 
 def parse_args() -> argparse.Namespace:

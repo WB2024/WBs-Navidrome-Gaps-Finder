@@ -15,6 +15,7 @@ A terminal UI application that helps you discover missing albums in your [Navidr
 5. **Displays** a side-by-side view of albums you own vs. albums you're missing
 6. **Inspect tracks** for any album — view your local tracklist with full audio details, or browse MusicBrainz releases and their tracks
 7. **Optionally integrates** with [Nicotine+](https://nicotine-plus.org/) — add missing albums directly to your Soulseek wishlist
+8. **Tag untagged artists** — find artists missing MusicBrainz IDs, search MusicBrainz, and write the correct ID back to the database
 
 ## Requirements
 
@@ -66,6 +67,7 @@ On first launch (without `--db`), the app will prompt you for the path to your N
 | `w`       | Add missing albums to Nicotine+ wishlist          |
 | `a`       | Select / deselect all (wishlist screen)           |
 | `n`       | Configure Nicotine+ config path                  |
+| `u`       | View/fix artists missing MusicBrainz IDs         |
 | `s`       | Change database path                             |
 | `q`       | Quit                                             |
 
@@ -157,6 +159,19 @@ After confirming, the selected albums appear in the Nicotine+ wishlist and are a
 ![Nicotine+ Wishlist](Screenshots/NicotineUIWishlist.webp)
 
 > **Note:** Nicotine+ loads its config into memory at startup. If you provided a Docker container name during setup, the container is restarted automatically after updating the wishlist. Otherwise, restart Nicotine+ manually for changes to take effect.
+
+## Fix Missing MusicBrainz Artist IDs
+
+The app can only compare albums for artists that have a MusicBrainz artist ID in the Navidrome database. Press `u` from the main screen to see all artists that are missing one.
+
+1. Press `u` to open the untagged artists list (with a filter box to search)
+2. Select an artist — the app searches MusicBrainz and presents matching results with:
+   - Match score, name, disambiguation, type (Person/Group), country, and active years
+   - The highlighted row shows the full MusicBrainz ID and genre tags
+3. Press `Enter` on the correct match to write the MusicBrainz artist ID directly into the Navidrome database
+4. The artist is removed from the untagged list and now appears in the main artist list for gap comparison
+
+> **Note:** This writes directly to your Navidrome `navidrome.db` database. It is recommended to back up the database before bulk-tagging. Changes take effect immediately — no restart of Navidrome is required.
 
 ## Notes
 
