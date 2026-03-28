@@ -150,6 +150,12 @@ This setting is optional and saved to `config.json`. The rest of the app works w
 4. Press `Enter` to confirm — selected albums are added to the `autosearch` list in your Nicotine+ config as `"Artist - Album"` search terms
 5. Duplicates are automatically skipped
 
+![Wishlist Selection](Screenshots/NicotineWishlistadd.png)
+
+After confirming, the selected albums appear in the Nicotine+ wishlist and are auto-searched on Soulseek at regular intervals.
+
+![Nicotine+ Wishlist](Screenshots/NicotineUIWishlist.webp)
+
 > **Note:** Nicotine+ loads its config into memory at startup. If you provided a Docker container name during setup, the container is restarted automatically after updating the wishlist. Otherwise, restart Nicotine+ manually for changes to take effect.
 
 ## Notes
