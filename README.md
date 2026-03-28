@@ -138,6 +138,8 @@ Press `n` at any time to configure the path to your Nicotine+ config folder — 
 - **Linux:** `~/.config/nicotine/` or your Docker/container config mount
 - **Windows:** `%APPDATA%\nicotine\`
 
+You can also optionally provide a **Docker container name**. If set, the app will automatically restart the container after updating the wishlist so Nicotine+ picks up the changes immediately. If left blank, you'll need to restart Nicotine+ manually.
+
 This setting is optional and saved to `config.json`. The rest of the app works without it.
 
 ### Adding to Wishlist
@@ -148,7 +150,7 @@ This setting is optional and saved to `config.json`. The rest of the app works w
 4. Press `Enter` to confirm — selected albums are added to the `autosearch` list in your Nicotine+ config as `"Artist - Album"` search terms
 5. Duplicates are automatically skipped
 
-> **Note:** If Nicotine+ is running when you update the wishlist, you may need to restart it for the changes to take effect.
+> **Note:** Nicotine+ loads its config into memory at startup. If you provided a Docker container name during setup, the container is restarted automatically after updating the wishlist. Otherwise, restart Nicotine+ manually for changes to take effect.
 
 ## Notes
 

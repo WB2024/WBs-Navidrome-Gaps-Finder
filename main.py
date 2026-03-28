@@ -6,6 +6,7 @@ import ast
 import csv
 import json
 import sqlite3
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -317,6 +318,13 @@ class NicotineSetupScreen(Screen):
                 id="nic-setup-prompt",
             )
             yield Input(placeholder="/path/to/nicotine/config/folder", id="nic-input")
+            yield Static(
+                "\n[bold]Docker container name[/] [dim](optional — leave blank if not using Docker)[/]\n"
+                "If provided, the container will be restarted automatically\n"
+                "after updating the wishlist so Nicotine+ picks up the changes.",
+                id="nic-docker-prompt",
+            )
+            yield Input(placeholder="e.g. nicotine-plus", id="nic-docker-input")
             yield Static("", id="nic-setup-error")
         yield Footer()
 
@@ -324,8 +332,15 @@ class NicotineSetupScreen(Screen):
         self.dismiss(None)
 
     @on(Input.Submitted, "#nic-input")
-    def submit_path(self, event: Input.Submitted) -> None:
-        path = event.value.strip().strip('"').strip("'")
+    def on_path_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#nic-docker-input", Input).focus()
+
+    @on(Input.Submitted, "#nic-docker-input")
+    def on_docker_submitted(self, event: Input.Submitted) -> None:
+        self._save()
+
+    def _save(self) -> None:
+        path = self.query_one("#nic-input", Input).value.strip().strip('"').strip("'")
         err = self.query_one("#nic-setup-error", Static)
 
         if not path:
@@ -345,8 +360,14 @@ class NicotineSetupScreen(Screen):
             err.update(f"[red]No 'config' file found in {path}[/]")
             return
 
+        container = self.query_one("#nic-docker-input", Input).value.strip()
+
         config = load_config()
         config["nicotine_config_path"] = str(p.resolve())
+        if container:
+            config["nicotine_container"] = container
+        else:
+            config.pop("nicotine_container", None)
         save_config(config)
         self.dismiss(True)
 
@@ -794,6 +815,8 @@ class WishlistScreen(Screen):
 
         config = load_config()
         nic_path = config.get("nicotine_config_path", "")
+        container = config.get("nicotine_container", "")
+
         existing = read_nicotine_autosearch(nic_path)
         existing_lower = {item.lower() for item in existing}
 
@@ -806,8 +829,49 @@ class WishlistScreen(Screen):
                 existing_lower.add(search_term.lower())
                 added += 1
 
+        if added == 0:
+            self.query_one("#wishlist-status", Static).update(
+                "[yellow]All selected albums are already in the wishlist.[/]"
+            )
+            return
+
         write_nicotine_autosearch(nic_path, existing)
-        self.dismiss(added)
+
+        if container:
+            self.query_one("#wishlist-status", Static).update(
+                f"[cyan]Added {added} album(s). Restarting Nicotine+ container…[/]"
+            )
+            self._restart_container(container, added)
+        else:
+            self.dismiss(added)
+
+    @work(thread=True)
+    def _restart_container(self, container: str, added: int) -> None:
+        try:
+            subprocess.run(
+                ["docker", "restart", container],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            self.app.call_from_thread(self._show_restart_error, added, "docker command not found")
+            return
+        except subprocess.TimeoutExpired:
+            self.app.call_from_thread(self._show_restart_error, added, "container restart timed out")
+            return
+        except subprocess.CalledProcessError as exc:
+            msg = exc.stderr.decode(errors="replace").strip() if exc.stderr else str(exc)
+            self.app.call_from_thread(self._show_restart_error, added, msg)
+            return
+        self.app.call_from_thread(self.dismiss, added)
+
+    def _show_restart_error(self, added: int, msg: str) -> None:
+        self.query_one("#wishlist-status", Static).update(
+            f"[green]Added {added} album(s) to wishlist.[/] "
+            f"[red]Container restart failed: {msg}[/]\n"
+            f"[dim]Restart Nicotine+ manually for changes to take effect.[/]"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -891,6 +955,10 @@ class NavidromeGapsApp(App):
         max-width: 100;
     }
     #nic-setup-prompt {
+        margin-bottom: 1;
+    }
+    #nic-docker-prompt {
+        margin-top: 1;
         margin-bottom: 1;
     }
     #nic-setup-error {
