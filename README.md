@@ -13,6 +13,7 @@ A terminal UI application that helps you discover missing albums in your [Navidr
 3. **Fetches** the complete discography for a selected artist from the MusicBrainz API
 4. **Compares** MusicBrainz release groups against your local library using `mbz_release_group_id`
 5. **Displays** a side-by-side view of albums you own vs. albums you're missing
+6. **Inspect tracks** for any album — view your local tracklist with full audio details, or browse MusicBrainz releases and their tracks
 
 ## Requirements
 
@@ -54,13 +55,14 @@ On first launch (without `--db`), the app will prompt you for the path to your N
 
 ### Key Bindings
 
-| Key       | Action                        |
-|-----------|-------------------------------|
-| `↑` / `↓` | Navigate the artist/album list |
-| `Enter`   | Select an artist              |
-| `Escape`  | Go back                       |
-| `s`       | Change database path          |
-| `q`       | Quit                          |
+| Key       | Action                                          |
+|-----------|--------------------------------------------------|
+| `↑` / `↓` | Navigate the artist/album list                   |
+| `Enter`   | Select an artist / inspect album tracks          |
+| `Escape`  | Go back                                          |
+| `e`       | Export missing albums to CSV (comparison screen)  |
+| `s`       | Change database path                             |
+| `q`       | Quit                                             |
 
 Type in the filter box at the top to search for artists by name.
 
@@ -89,6 +91,36 @@ After selecting an artist, the app fetches their full discography from MusicBrai
 Another example — here only 1 album is in the library, with 54 missing release groups listed on the right along with their type and first release date.
 
 ![Artist Results — Afroman](Screenshots/Artist%20Results%202.png)
+
+### Track Inspection — Local Album
+
+Press `Enter` on an album in the **In Your Library** panel to view its full tracklist pulled from your Navidrome database. Each track shows disc/track number, title, duration, artist, file format, bitrate, and sample rate.
+
+![Local Tracklist](Screenshots/LocalTracklist.webp)
+
+### Track Inspection — MusicBrainz Release Selection
+
+Press `Enter` on an album in the **Missing from Library** panel to browse its available releases on MusicBrainz. Releases are listed with their status, country, date, format, and track count. Select a release to view its tracks.
+
+![MusicBrainz Release Select](Screenshots/Musicbrainz%20Release%20Select.webp)
+
+### Track Inspection — MusicBrainz Tracklist
+
+After selecting a release, the full tracklist is fetched from MusicBrainz showing disc/track number, title, and duration.
+
+![MusicBrainz Tracklist](Screenshots/Musicbrainz%20TrackList.webp)
+
+## Export Missing Albums to CSV
+
+While viewing the comparison screen for an artist, press `e` to export all missing albums to a CSV file. The file is saved to your current working directory as `<Artist Name> - Missing Albums.csv` and contains:
+
+| Column             | Description                                  |
+|--------------------|----------------------------------------------|
+| Artist             | Artist name                                  |
+| Album              | Album / release group title                  |
+| Type               | Release group type (e.g. Album, Single, EP)  |
+| First Release Date | Earliest known release date from MusicBrainz |
+| MusicBrainz URL    | Direct link to the release group page        |
 
 ## Notes
 

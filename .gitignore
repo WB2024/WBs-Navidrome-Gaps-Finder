@@ -4,6 +4,9 @@ navidrome.db
 # App config
 config.json
 
+# Exported CSVs
+*.csv
+
 # Python
 __pycache__/
 *.py[cod]

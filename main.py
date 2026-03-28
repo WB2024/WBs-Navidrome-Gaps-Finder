@@ -2,6 +2,7 @@
 """Navidrome Gaps Finder - Find missing albums in your Navidrome music library."""
 
 import argparse
+import csv
 import json
 import sqlite3
 import sys
@@ -249,13 +250,17 @@ class SetupScreen(Screen):
 class ComparisonScreen(Screen):
     """Show albums in the library vs. missing from MusicBrainz."""
 
-    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "Back"),
+        Binding("e", "export_csv", "Export CSV"),
+    ]
 
     def __init__(self, artist_name: str, artist_id: str, mbz_artist_id: str):
         super().__init__()
         self.artist_name = artist_name
         self.artist_id = artist_id
         self.mbz_artist_id = mbz_artist_id
+        self._missing_data: list[tuple[str, str, str, str]] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -344,10 +349,13 @@ class ComparisonScreen(Screen):
 
     def _show_results(self, owned: list, missing: list) -> None:
         self.query_one("#comp-loading").display = False
+        self._owned_count = len(owned)
         self.query_one("#comp-status").update(
             f"[green]{len(owned)}[/] in library · [red]{len(missing)}[/] missing"
         )
         self.query_one("#comp-tables").display = True
+
+        self._missing_data = sorted(missing, key=lambda r: r[2] or "9999")
 
         ot = self.query_one("#owned-table", DataTable)
         ot.cursor_type = "row"
@@ -358,10 +366,31 @@ class ComparisonScreen(Screen):
         mt = self.query_one("#missing-table", DataTable)
         mt.cursor_type = "row"
         mt.add_columns("Album", "Type", "Date")
-        for i, (name, ftype, date, rg_id) in enumerate(
-            sorted(missing, key=lambda r: r[2] or "9999")
-        ):
+        for i, (name, ftype, date, rg_id) in enumerate(self._missing_data):
             mt.add_row(name, ftype, date, key=f"m{i}:{rg_id}")
+
+    def action_export_csv(self) -> None:
+        """Export missing albums to a CSV file."""
+        if not self._missing_data:
+            self.query_one("#comp-status").update("[yellow]No missing albums to export.[/]")
+            return
+
+        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in self.artist_name).strip()
+        filename = f"{safe_name} - Missing Albums.csv"
+        filepath = Path.cwd() / filename
+
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Artist", "Album", "Type", "First Release Date", "MusicBrainz URL"])
+            for name, ftype, date, rg_id in self._missing_data:
+                mb_url = f"https://musicbrainz.org/release-group/{rg_id}" if rg_id else ""
+                writer.writerow([self.artist_name, name, ftype, date, mb_url])
+
+        self.query_one("#comp-status").update(
+            f"[green]{self._owned_count}[/] in library · "
+            f"[red]{len(self._missing_data)}[/] missing · "
+            f"[bold cyan]Exported to {filename}[/]"
+        )
 
     @on(DataTable.RowSelected, "#owned-table")
     def on_owned_selected(self, event: DataTable.RowSelected) -> None:
