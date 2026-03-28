@@ -721,7 +721,6 @@ class WishlistScreen(Screen):
         Binding("escape", "app.pop_screen", "Back"),
         Binding("space", "toggle_selection", "Toggle"),
         Binding("a", "select_all", "Select All"),
-        Binding("enter", "confirm", "Add to Wishlist"),
     ]
 
     def __init__(self, artist_name: str, missing_albums: list[tuple[str, str, str, str]]):
@@ -738,7 +737,7 @@ class WishlistScreen(Screen):
                 id="wishlist-title",
             )
             yield Static(
-                "[dim]Space[/] toggle · [dim]A[/] select all · [dim]Enter[/] confirm",
+                "[dim]Space[/] toggle · [dim]A[/] select all · [dim]Enter[/] add to wishlist",
                 id="wishlist-hint",
             )
             yield DataTable(id="wishlist-table")
@@ -785,7 +784,8 @@ class WishlistScreen(Screen):
             self._refresh_check(i)
         self._update_status()
 
-    def action_confirm(self) -> None:
+    @on(DataTable.RowSelected, "#wishlist-table")
+    def on_wishlist_confirm(self, event: DataTable.RowSelected) -> None:
         if not self.selected:
             self.query_one("#wishlist-status", Static).update(
                 "[yellow]No albums selected.[/]"
