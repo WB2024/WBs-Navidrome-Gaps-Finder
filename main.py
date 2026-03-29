@@ -422,10 +422,12 @@ class ComparisonScreen(Screen):
         Binding("e", "export_csv", "Export CSV"),
         Binding("w", "add_to_wishlist", "Wishlist"),
         Binding("f", "cycle_filter", "Filter Type"),
+        Binding("t", "cycle_secondary", "Sub-filter"),
         Binding("o", "cycle_sort", "Sort"),
     ]
 
     TYPE_FILTERS = ["All", "Album", "Single", "EP", "Broadcast", "Other"]
+    SECONDARY_FILTERS = ["All", "None", "Live", "Compilation", "Remix", "Interview", "Spokenword", "DJ-mix"]
     SORT_MODES = ["Date", "Name", "Type"]
 
     def __init__(self, artist_name: str, artist_id: str, mbz_artist_id: str):
@@ -436,6 +438,7 @@ class ComparisonScreen(Screen):
         self._owned_data: list[tuple[str, str, str, str]] = []
         self._missing_data: list[tuple[str, str, str, str]] = []
         self._filter_idx = 0
+        self._secondary_idx = 0
         self._sort_idx = 0
 
     def compose(self) -> ComposeResult:
@@ -537,14 +540,28 @@ class ComparisonScreen(Screen):
     @staticmethod
     def _primary_type(full_type: str) -> str:
         """Extract the primary type from a full type string like 'Album + Live'."""
-        return full_type.split(" + ")[0].split(",")[0].strip() if full_type else ""
+        return full_type.split(" + ")[0].split(",")[0].strip().title() if full_type else ""
+
+    @staticmethod
+    def _secondary_types(full_type: str) -> list[str]:
+        """Extract secondary types from a full type string like 'Album + Live, Compilation'."""
+        parts = full_type.split(" + ", 1)
+        if len(parts) < 2:
+            return []
+        return [s.strip().title() for s in parts[1].split(",")]
 
     def _filtered(self, data: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
-        """Filter data by the current type filter."""
-        if self._filter_idx == 0:
-            return list(data)
-        target = self.TYPE_FILTERS[self._filter_idx]
-        return [row for row in data if self._primary_type(row[1]) == target]
+        """Filter data by the current primary and secondary type filters."""
+        result = list(data)
+        pf = self.TYPE_FILTERS[self._filter_idx]
+        if pf != "All":
+            result = [row for row in result if self._primary_type(row[1]) == pf]
+        sf = self.SECONDARY_FILTERS[self._secondary_idx]
+        if sf == "None":
+            result = [row for row in result if not self._secondary_types(row[1])]
+        elif sf != "All":
+            result = [row for row in result if sf in self._secondary_types(row[1])]
+        return result
 
     def _sorted(self, data: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
         """Sort data by the current sort mode."""
@@ -556,19 +573,20 @@ class ComparisonScreen(Screen):
         else:  # Type
             return sorted(data, key=lambda r: (self._primary_type(r[1]), r[2] or "9999"))
 
+    def _is_filtered(self) -> bool:
+        return self._filter_idx != 0 or self._secondary_idx != 0
+
     def _apply_filter_and_sort(self) -> None:
         """Rebuild both tables with current filter and sort settings."""
-        filt = self.TYPE_FILTERS[self._filter_idx]
-        sort = self.SORT_MODES[self._sort_idx]
-
         owned_filtered = self._sorted(self._filtered(self._owned_data))
         missing_filtered = self._sorted(self._filtered(self._missing_data))
+        filtered = self._is_filtered()
 
         self.query_one("#comp-status").update(
             f"[green]{len(owned_filtered)}[/] in library"
-            f"{f' [dim](of {len(self._owned_data)})[/]' if filt != 'All' else ''}"
+            f"{f' [dim](of {len(self._owned_data)})[/]' if filtered else ''}"
             f" · [red]{len(missing_filtered)}[/] missing"
-            f"{f' [dim](of {len(self._missing_data)})[/]' if filt != 'All' else ''}"
+            f"{f' [dim](of {len(self._missing_data)})[/]' if filtered else ''}"
         )
 
         filter_parts = []
@@ -577,6 +595,13 @@ class ComparisonScreen(Screen):
                 filter_parts.append(f"[bold cyan]{t}[/]")
             else:
                 filter_parts.append(f"[dim]{t}[/]")
+        secondary_parts = []
+        for i, s in enumerate(self.SECONDARY_FILTERS):
+            label = "Pure" if s == "None" else s
+            if i == self._secondary_idx:
+                secondary_parts.append(f"[bold cyan]{label}[/]")
+            else:
+                secondary_parts.append(f"[dim]{label}[/]")
         sort_parts = []
         for i, s in enumerate(self.SORT_MODES):
             if i == self._sort_idx:
@@ -585,7 +610,8 @@ class ComparisonScreen(Screen):
                 sort_parts.append(f"[dim]{s}[/]")
 
         self.query_one("#comp-filter-bar", Static).update(
-            f"[dim]Filter (f):[/] {' · '.join(filter_parts)}"
+            f"[dim]Type (f):[/] {' · '.join(filter_parts)}\n"
+            f"[dim]Sub (t):[/]  {' · '.join(secondary_parts)}"
             f"    [dim]Sort (o):[/] {' · '.join(sort_parts)}"
         )
 
@@ -607,6 +633,10 @@ class ComparisonScreen(Screen):
         self._filter_idx = (self._filter_idx + 1) % len(self.TYPE_FILTERS)
         self._apply_filter_and_sort()
 
+    def action_cycle_secondary(self) -> None:
+        self._secondary_idx = (self._secondary_idx + 1) % len(self.SECONDARY_FILTERS)
+        self._apply_filter_and_sort()
+
     def action_cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self.SORT_MODES)
         self._apply_filter_and_sort()
@@ -619,8 +649,14 @@ class ComparisonScreen(Screen):
             return
 
         filt = self.TYPE_FILTERS[self._filter_idx]
+        sfilt = self.SECONDARY_FILTERS[self._secondary_idx]
         safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in self.artist_name).strip()
-        suffix = f" ({filt})" if filt != "All" else ""
+        parts = []
+        if filt != "All":
+            parts.append(filt)
+        if sfilt != "All":
+            parts.append("Pure" if sfilt == "None" else sfilt)
+        suffix = f" ({' - '.join(parts)})" if parts else ""
         filename = f"{safe_name} - Missing Albums{suffix}.csv"
         filepath = Path.cwd() / filename
 
@@ -680,14 +716,14 @@ class ComparisonScreen(Screen):
 
     def _on_wishlist_done(self, added) -> None:
         if added is not None and added > 0:
-            filt = self.TYPE_FILTERS[self._filter_idx]
+            filtered = self._is_filtered()
             owned_filtered = self._sorted(self._filtered(self._owned_data))
             missing_filtered = self._sorted(self._filtered(self._missing_data))
             self.query_one("#comp-status").update(
                 f"[green]{len(owned_filtered)}[/] in library"
-                f"{f' [dim](of {len(self._owned_data)})[/]' if filt != 'All' else ''}"
+                f"{f' [dim](of {len(self._owned_data)})[/]' if filtered else ''}"
                 f" · [red]{len(missing_filtered)}[/] missing"
-                f"{f' [dim](of {len(self._missing_data)})[/]' if filt != 'All' else ''}"
+                f"{f' [dim](of {len(self._missing_data)})[/]' if filtered else ''}"
                 f" · [bold cyan]Added {added} album(s) to Nicotine+ wishlist[/]"
             )
 
