@@ -64,6 +64,8 @@ On first launch (without `--db`), the app will prompt you for the path to your N
 | `Space`   | Toggle album selection (wishlist screen)          |
 | `Escape`  | Go back                                          |
 | `e`       | Export missing albums to CSV (comparison screen)  |
+| `f`       | Cycle type filter (comparison screen)             |
+| `o`       | Cycle sort mode (comparison screen)               |
 | `w`       | Add missing albums to Nicotine+ wishlist          |
 | `a`       | Select / deselect all (wishlist screen)           |
 | `n`       | Configure Nicotine+ config path                  |
@@ -98,6 +100,27 @@ After selecting an artist, the app fetches their full discography from MusicBrai
 Another example — here only 1 album is in the library, with 54 missing release groups listed on the right along with their type and first release date.
 
 ![Artist Results — Afroman](Screenshots/Artist%20Results%202.png)
+
+### Filtering & Sorting
+
+On the comparison screen, press `f` to cycle through type filters and `o` to cycle sort modes. Both owned and missing tables are filtered simultaneously.
+
+| Filter  | Shows                                         |
+|---------|-----------------------------------------------|
+| All     | Every release group (default)                 |
+| Album   | Studio albums only                            |
+| Single  | Singles only                                  |
+| EP      | EPs only                                      |
+| Broadcast | Broadcast recordings                       |
+| Other   | Anything not categorised above                |
+
+| Sort   | Orders by                                      |
+|--------|-------------------------------------------------|
+| Date   | Release date, earliest first (default)          |
+| Name   | Album title, A–Z                                |
+| Type   | Primary type, then date                         |
+
+The status bar shows filtered counts (e.g. "12 in library (of 30) · 8 missing (of 54)"). CSV export and Nicotine+ wishlist also respect the active filter, so you can export just missing albums or just missing singles.
 
 ### Track Inspection — Local Album
 

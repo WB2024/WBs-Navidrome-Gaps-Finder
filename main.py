@@ -421,14 +421,22 @@ class ComparisonScreen(Screen):
         Binding("escape", "app.pop_screen", "Back"),
         Binding("e", "export_csv", "Export CSV"),
         Binding("w", "add_to_wishlist", "Wishlist"),
+        Binding("f", "cycle_filter", "Filter Type"),
+        Binding("o", "cycle_sort", "Sort"),
     ]
+
+    TYPE_FILTERS = ["All", "Album", "Single", "EP", "Broadcast", "Other"]
+    SORT_MODES = ["Date", "Name", "Type"]
 
     def __init__(self, artist_name: str, artist_id: str, mbz_artist_id: str):
         super().__init__()
         self.artist_name = artist_name
         self.artist_id = artist_id
         self.mbz_artist_id = mbz_artist_id
+        self._owned_data: list[tuple[str, str, str, str]] = []
         self._missing_data: list[tuple[str, str, str, str]] = []
+        self._filter_idx = 0
+        self._sort_idx = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -438,6 +446,7 @@ class ComparisonScreen(Screen):
                 "Fetching release groups from MusicBrainz…", id="comp-status"
             )
             yield LoadingIndicator(id="comp-loading")
+            yield Static("", id="comp-filter-bar")
             with Horizontal(id="comp-tables"):
                 with Vertical(id="owned-box"):
                     yield Static(
@@ -455,6 +464,7 @@ class ComparisonScreen(Screen):
     def on_mount(self) -> None:
         self.query_one("#comp-tables").display = False
         self.query_one("#comp-detail").display = False
+        self.query_one("#comp-filter-bar").display = False
         self.do_comparison()
 
     @on(DataTable.RowHighlighted)
@@ -517,47 +527,112 @@ class ComparisonScreen(Screen):
 
     def _show_results(self, owned: list, missing: list) -> None:
         self.query_one("#comp-loading").display = False
-        self._owned_count = len(owned)
-        self.query_one("#comp-status").update(
-            f"[green]{len(owned)}[/] in library · [red]{len(missing)}[/] missing"
-        )
         self.query_one("#comp-tables").display = True
+        self.query_one("#comp-filter-bar").display = True
 
+        self._owned_data = owned
         self._missing_data = sorted(missing, key=lambda r: r[2] or "9999")
+        self._apply_filter_and_sort()
+
+    @staticmethod
+    def _primary_type(full_type: str) -> str:
+        """Extract the primary type from a full type string like 'Album + Live'."""
+        return full_type.split(" + ")[0].split(",")[0].strip() if full_type else ""
+
+    def _filtered(self, data: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
+        """Filter data by the current type filter."""
+        if self._filter_idx == 0:
+            return list(data)
+        target = self.TYPE_FILTERS[self._filter_idx]
+        return [row for row in data if self._primary_type(row[1]) == target]
+
+    def _sorted(self, data: list[tuple[str, str, str, str]]) -> list[tuple[str, str, str, str]]:
+        """Sort data by the current sort mode."""
+        mode = self.SORT_MODES[self._sort_idx]
+        if mode == "Date":
+            return sorted(data, key=lambda r: r[2] or "9999")
+        elif mode == "Name":
+            return sorted(data, key=lambda r: r[0].lower())
+        else:  # Type
+            return sorted(data, key=lambda r: (self._primary_type(r[1]), r[2] or "9999"))
+
+    def _apply_filter_and_sort(self) -> None:
+        """Rebuild both tables with current filter and sort settings."""
+        filt = self.TYPE_FILTERS[self._filter_idx]
+        sort = self.SORT_MODES[self._sort_idx]
+
+        owned_filtered = self._sorted(self._filtered(self._owned_data))
+        missing_filtered = self._sorted(self._filtered(self._missing_data))
+
+        self.query_one("#comp-status").update(
+            f"[green]{len(owned_filtered)}[/] in library"
+            f"{f' [dim](of {len(self._owned_data)})[/]' if filt != 'All' else ''}"
+            f" · [red]{len(missing_filtered)}[/] missing"
+            f"{f' [dim](of {len(self._missing_data)})[/]' if filt != 'All' else ''}"
+        )
+
+        filter_parts = []
+        for i, t in enumerate(self.TYPE_FILTERS):
+            if i == self._filter_idx:
+                filter_parts.append(f"[bold cyan]{t}[/]")
+            else:
+                filter_parts.append(f"[dim]{t}[/]")
+        sort_parts = []
+        for i, s in enumerate(self.SORT_MODES):
+            if i == self._sort_idx:
+                sort_parts.append(f"[bold cyan]{s}[/]")
+            else:
+                sort_parts.append(f"[dim]{s}[/]")
+
+        self.query_one("#comp-filter-bar", Static).update(
+            f"[dim]Filter (f):[/] {' · '.join(filter_parts)}"
+            f"    [dim]Sort (o):[/] {' · '.join(sort_parts)}"
+        )
 
         ot = self.query_one("#owned-table", DataTable)
+        ot.clear(columns=True)
         ot.cursor_type = "row"
         ot.add_columns("Album", "Type", "Year")
-        for i, (name, atype, year, rg_id) in enumerate(owned):
+        for i, (name, atype, year, rg_id) in enumerate(owned_filtered):
             ot.add_row(name, atype, year, key=f"{i}:{rg_id}")
 
         mt = self.query_one("#missing-table", DataTable)
+        mt.clear(columns=True)
         mt.cursor_type = "row"
         mt.add_columns("Album", "Type", "Date")
-        for i, (name, ftype, date, rg_id) in enumerate(self._missing_data):
+        for i, (name, ftype, date, rg_id) in enumerate(missing_filtered):
             mt.add_row(name, ftype, date, key=f"m{i}:{rg_id}")
 
+    def action_cycle_filter(self) -> None:
+        self._filter_idx = (self._filter_idx + 1) % len(self.TYPE_FILTERS)
+        self._apply_filter_and_sort()
+
+    def action_cycle_sort(self) -> None:
+        self._sort_idx = (self._sort_idx + 1) % len(self.SORT_MODES)
+        self._apply_filter_and_sort()
+
     def action_export_csv(self) -> None:
-        """Export missing albums to a CSV file."""
-        if not self._missing_data:
+        """Export missing albums to a CSV file (respects current filter)."""
+        filtered = self._sorted(self._filtered(self._missing_data))
+        if not filtered:
             self.query_one("#comp-status").update("[yellow]No missing albums to export.[/]")
             return
 
+        filt = self.TYPE_FILTERS[self._filter_idx]
         safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in self.artist_name).strip()
-        filename = f"{safe_name} - Missing Albums.csv"
+        suffix = f" ({filt})" if filt != "All" else ""
+        filename = f"{safe_name} - Missing Albums{suffix}.csv"
         filepath = Path.cwd() / filename
 
         with open(filepath, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["Artist", "Album", "Type", "First Release Date", "MusicBrainz URL"])
-            for name, ftype, date, rg_id in self._missing_data:
+            for name, ftype, date, rg_id in filtered:
                 mb_url = f"https://musicbrainz.org/release-group/{rg_id}" if rg_id else ""
                 writer.writerow([self.artist_name, name, ftype, date, mb_url])
 
         self.query_one("#comp-status").update(
-            f"[green]{self._owned_count}[/] in library · "
-            f"[red]{len(self._missing_data)}[/] missing · "
-            f"[bold cyan]Exported to {filename}[/]"
+            f"[bold cyan]Exported {len(filtered)} album(s) to {filename}[/]"
         )
 
     @on(DataTable.RowSelected, "#owned-table")
@@ -581,8 +656,9 @@ class ComparisonScreen(Screen):
         self.app.push_screen(MBReleasesScreen(album_name, rg_id))
 
     def action_add_to_wishlist(self) -> None:
-        """Open the wishlist selection screen for missing albums."""
-        if not self._missing_data:
+        """Open the wishlist selection screen for missing albums (respects current filter)."""
+        filtered = self._sorted(self._filtered(self._missing_data))
+        if not filtered:
             return
         config = load_config()
         nic_path = config.get("nicotine_config_path", "")
@@ -590,23 +666,29 @@ class ComparisonScreen(Screen):
             self.app.push_screen(NicotineSetupScreen(), callback=self._on_nicotine_setup)
         else:
             self.app.push_screen(
-                WishlistScreen(self.artist_name, self._missing_data),
+                WishlistScreen(self.artist_name, filtered),
                 callback=self._on_wishlist_done,
             )
 
     def _on_nicotine_setup(self, result) -> None:
         if result:
+            filtered = self._sorted(self._filtered(self._missing_data))
             self.app.push_screen(
-                WishlistScreen(self.artist_name, self._missing_data),
+                WishlistScreen(self.artist_name, filtered),
                 callback=self._on_wishlist_done,
             )
 
     def _on_wishlist_done(self, added) -> None:
         if added is not None and added > 0:
+            filt = self.TYPE_FILTERS[self._filter_idx]
+            owned_filtered = self._sorted(self._filtered(self._owned_data))
+            missing_filtered = self._sorted(self._filtered(self._missing_data))
             self.query_one("#comp-status").update(
-                f"[green]{self._owned_count}[/] in library · "
-                f"[red]{len(self._missing_data)}[/] missing · "
-                f"[bold cyan]Added {added} album(s) to Nicotine+ wishlist[/]"
+                f"[green]{len(owned_filtered)}[/] in library"
+                f"{f' [dim](of {len(self._owned_data)})[/]' if filt != 'All' else ''}"
+                f" · [red]{len(missing_filtered)}[/] missing"
+                f"{f' [dim](of {len(self._missing_data)})[/]' if filt != 'All' else ''}"
+                f" · [bold cyan]Added {added} album(s) to Nicotine+ wishlist[/]"
             )
 
 
@@ -1129,6 +1211,9 @@ class NavidromeGapsApp(App):
         margin: 1 1 0 1;
     }
     #comp-status {
+        margin: 0 1 0 1;
+    }
+    #comp-filter-bar {
         margin: 0 1 1 1;
     }
     #comp-tables {
