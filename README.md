@@ -61,19 +61,21 @@ You can install the app as a global `NDGAPS` command so you can run it from anyw
 
 1. Make sure you've completed the [Installation](#installation) steps above (clone, venv, pip install).
 
-2. Create the wrapper script:
+2. Create the wrapper script (run this **from inside the cloned repo directory**):
 
 ```bash
-sudo tee /usr/local/bin/NDGAPS > /dev/null << 'EOF'
+cd /path/to/WBs-Navidrome-Gaps-Finder
+
+sudo tee /usr/local/bin/NDGAPS > /dev/null << EOF
 #!/bin/bash
 # Navidrome Gaps Finder launcher
-INSTALL_DIR="$HOME/WBs-Navidrome-Gaps-Finder"
-source "$INSTALL_DIR/venv/bin/activate"
-python "$INSTALL_DIR/main.py" "$@"
+INSTALL_DIR="$(pwd)"
+source "\$INSTALL_DIR/venv/bin/activate"
+python "\$INSTALL_DIR/main.py" "\$@"
 EOF
 ```
 
-> **Note:** Change `INSTALL_DIR` if you cloned the repository to a different location.
+This bakes the full path to whatever directory you're in, so it works regardless of where the repo is cloned.
 
 3. Make it executable:
 
