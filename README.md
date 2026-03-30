@@ -55,6 +55,40 @@ On first launch (without `--db`), the app will prompt you for the path to your N
 
 > **Tip:** If you can't paste into the TUI input field, use `Shift+Insert` or right-click instead of `Ctrl+V`. Alternatively, use the `--db` flag shown above.
 
+### Install as a System Command (Linux / macOS)
+
+You can install the app as a global `NDGAPS` command so you can run it from anywhere without activating the virtual environment manually.
+
+1. Make sure you've completed the [Installation](#installation) steps above (clone, venv, pip install).
+
+2. Create the wrapper script:
+
+```bash
+sudo tee /usr/local/bin/NDGAPS > /dev/null << 'EOF'
+#!/bin/bash
+# Navidrome Gaps Finder launcher
+INSTALL_DIR="$HOME/WBs-Navidrome-Gaps-Finder"
+source "$INSTALL_DIR/venv/bin/activate"
+python "$INSTALL_DIR/main.py" "$@"
+EOF
+```
+
+> **Note:** Change `INSTALL_DIR` if you cloned the repository to a different location.
+
+3. Make it executable:
+
+```bash
+sudo chmod +x /usr/local/bin/NDGAPS
+```
+
+4. Run it from anywhere:
+
+```bash
+NDGAPS
+# or with a database path
+NDGAPS --db /path/to/navidrome.db
+```
+
 ### Key Bindings
 
 | Key       | Action                                          |
