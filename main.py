@@ -1080,7 +1080,10 @@ class WishlistScreen(Screen):
 class SimilarArtistsScreen(Screen):
     """Show artists similar to a selected artist via Last.fm."""
 
-    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "Back"),
+        Binding("l", "similar_for_highlighted", "Similar Artists"),
+    ]
 
     def __init__(self, artist_name: str, mbz_artist_id: str, library_mbids: dict[str, tuple[str, str]]):
         super().__init__()
@@ -1201,6 +1204,25 @@ class SimilarArtistsScreen(Screen):
         else:
             name = art.get("name", "")
             self.app.push_screen(ComparisonScreen(name, "", mbid))
+
+    def action_similar_for_highlighted(self) -> None:
+        """Look up similar artists for the currently highlighted artist in the table."""
+        table = self.query_one("#similar-table", DataTable)
+        if not table.display or table.cursor_row < 0:
+            return
+        row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+        idx = int(row_key.value)
+        if idx < 0 or idx >= len(self._similar):
+            return
+        art = self._similar[idx]
+        mbid = art.get("mbid", "")
+        if not mbid:
+            self.query_one("#similar-status", Static).update(
+                "[yellow]This artist has no MusicBrainz ID \u2014 cannot look up similar artists.[/]"
+            )
+            return
+        name = art.get("name", "")
+        self.app.push_screen(SimilarArtistsScreen(name, mbid, self._library_mbids))
 
 
 class UntaggedArtistsScreen(Screen):
@@ -1614,7 +1636,10 @@ class NavidromeGapsApp(App):
         """Look up similar artists on Last.fm for the highlighted artist."""
         if not self.artists:
             return
-        table = self.query_one("#artist-table", DataTable)
+        try:
+            table = self.query_one("#artist-table", DataTable)
+        except Exception:
+            return
         if table.cursor_row < 0:
             return
         row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
