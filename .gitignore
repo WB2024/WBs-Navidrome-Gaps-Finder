@@ -4,6 +4,9 @@ navidrome.db
 # App config
 config.json
 
+# Environment variables (API keys)
+.env
+
 # Exported CSVs
 *.csv
 

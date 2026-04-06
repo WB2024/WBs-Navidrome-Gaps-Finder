@@ -16,11 +16,13 @@ A terminal UI application that helps you discover missing albums in your [Navidr
 6. **Inspect tracks** for any album — view your local tracklist with full audio details, or browse MusicBrainz releases and their tracks
 7. **Optionally integrates** with [Nicotine+](https://nicotine-plus.org/) — add missing albums directly to your Soulseek wishlist
 8. **Tag untagged artists** — find artists missing MusicBrainz IDs, search MusicBrainz, and write the correct ID back to the database
+9. **Find similar artists** — uses the [Last.fm API](https://www.last.fm/api) to discover artists similar to anyone in your library, and shows whether they're already in your collection
 
 ## Requirements
 
 - Python 3.10+
 - Access to your Navidrome `navidrome.db` database file
+- *(Optional)* A [Last.fm API key](https://www.last.fm/api/account/create) for the Artist Similarity Finder feature
 
 ## Installation
 
@@ -107,6 +109,7 @@ NDGAPS --db /path/to/navidrome.db
 | `a`       | Select / deselect all (wishlist screen)           |
 | `n`       | Configure Nicotine+ config path                  |
 | `u`       | View/fix artists missing MusicBrainz IDs         |
+| `l`       | Find similar artists via Last.fm                 |
 | `s`       | Change database path                             |
 | `q`       | Quit                                             |
 
@@ -243,6 +246,51 @@ The app can only compare albums for artists that have a MusicBrainz artist ID in
 4. The artist is removed from the untagged list and now appears in the main artist list for gap comparison
 
 > **Note:** This writes directly to your Navidrome `navidrome.db` database. It is recommended to back up the database before bulk-tagging. Changes take effect immediately — no restart of Navidrome is required.
+
+## Artist Similarity Finder (Last.fm)
+
+Discover new music by finding artists similar to the ones already in your library, powered by [Last.fm](https://www.last.fm/).
+
+### Setting Up Last.fm API Access
+
+1. **Create a Last.fm account** if you don't already have one at [last.fm/join](https://www.last.fm/join)
+
+2. **Create an API account** at [last.fm/api/account/create](https://www.last.fm/api/account/create). Fill in the form:
+
+   | Field                   | What to enter                                    |
+   |-------------------------|--------------------------------------------------|
+   | Contact email            | Your email address                               |
+   | Application name         | e.g. `Navidrome Gaps Finder`                     |
+   | Application description  | e.g. `Finding similar artists for my music library` |
+   | Callback URL             | *(leave blank — not needed)*                     |
+   | Application homepage     | *(leave blank — not needed)*                     |
+
+3. After submitting, Last.fm will provide you with an **API Key** and a **Shared Secret**. You only need the **API Key**.
+
+4. **Create your `.env` file** from the provided example:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+5. **Edit `.env`** and replace `your_api_key_here` with your actual API key:
+
+   ```
+   LASTFM_API_KEY=abc123def456...
+   ```
+
+   > **Security:** The `.env` file is listed in `.gitignore` and will not be committed to version control.
+
+### Using the Similar Artists Feature
+
+1. From the main artist list, highlight an artist using the arrow keys
+2. Press `l` to look up similar artists on Last.fm
+3. The app fetches similar artists and displays them in a table with:
+   - **Match** — similarity percentage (100% = very similar)
+   - **Artist** — the similar artist's name
+   - **In Library** — ✓ if the artist is already in your Navidrome library
+4. Highlight a row to see the artist's MusicBrainz ID and Last.fm URL
+5. Press `Enter` on a similar artist that is in your library to jump directly to their album comparison screen
 
 ## Notes
 

@@ -5,6 +5,7 @@ import argparse
 import ast
 import csv
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import time
 from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -19,9 +21,12 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, LoadingIndicator, Static
 from textual.containers import Horizontal, Vertical
 
+load_dotenv(Path(__file__).parent / ".env")
+
 CONFIG_PATH = Path(__file__).parent / "config.json"
 MB_BASE = "https://musicbrainz.org/ws/2"
 MB_USER_AGENT = "NavidromeGapsFinder/1.0 (navidrome-gaps-finder)"
+LASTFM_BASE = "https://ws.audioscrobbler.com/2.0/"
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +282,35 @@ def search_musicbrainz_artists(query: str) -> list[dict]:
     )
     resp.raise_for_status()
     return resp.json().get("artists", [])
+
+
+# ---------------------------------------------------------------------------
+# Last.fm API
+# ---------------------------------------------------------------------------
+
+def get_lastfm_api_key() -> str | None:
+    """Return the Last.fm API key from the environment, or None."""
+    return os.environ.get("LASTFM_API_KEY")
+
+
+def fetch_similar_artists(mbid: str, api_key: str, limit: int = 50) -> list[dict]:
+    """Fetch similar artists from Last.fm using a MusicBrainz artist ID."""
+    resp = requests.get(
+        LASTFM_BASE,
+        params={
+            "method": "artist.getsimilar",
+            "mbid": mbid,
+            "api_key": api_key,
+            "limit": limit,
+            "format": "json",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Last.fm error {data['error']}: {data.get('message', '')}")
+    return data.get("similarartists", {}).get("artist", [])
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1034,6 +1068,134 @@ class WishlistScreen(Screen):
         )
 
 
+class SimilarArtistsScreen(Screen):
+    """Show artists similar to a selected artist via Last.fm."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def __init__(self, artist_name: str, mbz_artist_id: str, library_mbids: dict[str, tuple[str, str]]):
+        super().__init__()
+        self.artist_name = artist_name
+        self.mbz_artist_id = mbz_artist_id
+        # library_mbids: {mbz_artist_id: (navidrome_id, name)}
+        self._library_mbids = library_mbids
+        self._similar: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="similar-root"):
+            yield Static(
+                f"Fetching similar artists for [bold]{self.artist_name}[/] from Last.fm…",
+                id="similar-title",
+            )
+            yield LoadingIndicator(id="similar-loading")
+            yield DataTable(id="similar-table")
+            yield Static("", id="similar-detail")
+            yield Static("", id="similar-status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#similar-table").display = False
+        self.query_one("#similar-detail").display = False
+        self.do_fetch()
+
+    @work(thread=True)
+    def do_fetch(self) -> None:
+        api_key = get_lastfm_api_key()
+        if not api_key or api_key == "your_api_key_here":
+            self.app.call_from_thread(
+                self._show_error,
+                "Last.fm API key not configured. "
+                "Copy .env.example to .env and add your key.",
+            )
+            return
+        try:
+            similar = fetch_similar_artists(self.mbz_artist_id, api_key)
+        except Exception as exc:
+            self.app.call_from_thread(self._show_error, str(exc))
+            return
+        self.app.call_from_thread(self._show_results, similar)
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#similar-loading").display = False
+        self.query_one("#similar-title", Static).update(f"[red]Error: {msg}[/]")
+
+    def _show_results(self, similar: list[dict]) -> None:
+        self.query_one("#similar-loading").display = False
+        self._similar = similar
+
+        if not similar:
+            self.query_one("#similar-title", Static).update(
+                f"No similar artists found for [bold]{self.artist_name}[/]"
+            )
+            return
+
+        in_lib = sum(1 for s in similar if s.get("mbid", "") in self._library_mbids)
+        self.query_one("#similar-title", Static).update(
+            f"[bold]{self.artist_name}[/] — [dim]Similar Artists (Last.fm)[/]"
+        )
+        self.query_one("#similar-status", Static).update(
+            f"[dim]{len(similar)} similar artist(s) · "
+            f"[green]{in_lib}[/] in your library · "
+            f"[red]{len(similar) - in_lib}[/] not in your library[/]"
+        )
+
+        table = self.query_one("#similar-table", DataTable)
+        table.display = True
+        table.cursor_type = "row"
+        table.add_columns("Match", "Artist", "In Library")
+        for i, art in enumerate(similar):
+            name = art.get("name", "")
+            match_val = art.get("match", "")
+            try:
+                match_pct = f"{float(match_val) * 100:.0f}%"
+            except (ValueError, TypeError):
+                match_pct = str(match_val)
+            mbid = art.get("mbid", "")
+            in_library = "✓" if mbid and mbid in self._library_mbids else ""
+            table.add_row(match_pct, name, in_library, key=str(i))
+
+    @on(DataTable.RowHighlighted, "#similar-table")
+    def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.row_key and event.row_key.value is not None:
+            idx = int(event.row_key.value)
+            if 0 <= idx < len(self._similar):
+                art = self._similar[idx]
+                mbid = art.get("mbid", "")
+                url = art.get("url", "")
+                detail = self.query_one("#similar-detail", Static)
+                detail.display = True
+                parts = []
+                if mbid:
+                    parts.append(f"[dim]MBID:[/] [bold]{mbid}[/]")
+                if url:
+                    parts.append(f"[dim]Last.fm:[/] {url}")
+                if mbid and mbid in self._library_mbids:
+                    parts.append("[green]★ In your library[/]")
+                detail.update("  ".join(parts) if parts else "[dim]No MusicBrainz ID available[/]")
+
+    @on(DataTable.RowSelected, "#similar-table")
+    def on_artist_selected(self, event: DataTable.RowSelected) -> None:
+        idx = int(event.row_key.value)
+        if idx < 0 or idx >= len(self._similar):
+            return
+        art = self._similar[idx]
+        mbid = art.get("mbid", "")
+        if not mbid:
+            self.query_one("#similar-status", Static).update(
+                "[yellow]This artist has no MusicBrainz ID — cannot view albums.[/]"
+            )
+            return
+        if mbid in self._library_mbids:
+            nid, name = self._library_mbids[mbid]
+            self.app.push_screen(ComparisonScreen(name, nid, mbid))
+        else:
+            name = art.get("name", "")
+            self.query_one("#similar-status", Static).update(
+                f"[dim]{name} is not in your library.[/]"
+            )
+
+
 class UntaggedArtistsScreen(Screen):
     """List artists without a MusicBrainz ID and allow tagging them."""
 
@@ -1215,6 +1377,7 @@ class NavidromeGapsApp(App):
         Binding("s", "setup", "Change DB Path"),
         Binding("n", "nicotine_setup", "Nicotine+ Config"),
         Binding("u", "untagged", "Untagged Artists"),
+        Binding("l", "similar_artists", "Similar Artists"),
     ]
 
     def __init__(self, db_path: str | None = None):
@@ -1344,6 +1507,25 @@ class NavidromeGapsApp(App):
         height: auto;
         max-height: 2;
     }
+    #similar-root {
+        height: 1fr;
+    }
+    #similar-title {
+        margin: 1 1 0 1;
+    }
+    #similar-table {
+        height: 1fr;
+        margin: 0 1;
+    }
+    #similar-detail {
+        margin: 0 1;
+        height: auto;
+        max-height: 2;
+    }
+    #similar-status {
+        margin: 0 1;
+        height: auto;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -1420,6 +1602,23 @@ class NavidromeGapsApp(App):
 
     def _on_untagged_return(self, result) -> None:
         self._load_artists()
+
+    def action_similar_artists(self) -> None:
+        """Look up similar artists on Last.fm for the highlighted artist."""
+        if not self.artists:
+            return
+        table = self.query_one("#artist-table", DataTable)
+        if table.cursor_row < 0:
+            return
+        row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+        row = table.get_row(row_key)
+        name, mbid = row[0], row[1]
+        # Build a lookup of library MBIDs -> (navidrome_id, name)
+        library_mbids: dict[str, tuple[str, str]] = {}
+        for nid, aname, ambid in self.artists:
+            if ambid:
+                library_mbids[ambid] = (nid, aname)
+        self.push_screen(SimilarArtistsScreen(name, mbid, library_mbids))
 
 
 def parse_args() -> argparse.Namespace:
