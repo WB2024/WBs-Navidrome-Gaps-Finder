@@ -195,7 +195,7 @@ def _get_ssh_client(config: dict) -> paramiko.SSHClient:
 
     connect_kwargs: dict = {"hostname": host, "port": port, "username": user}
     if key_path:
-        connect_kwargs["key_filename"] = key_path
+        connect_kwargs["key_filename"] = os.path.expanduser(key_path)
     elif password:
         connect_kwargs["password"] = password
     # If neither key nor password, paramiko will try the SSH agent / default keys
