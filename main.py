@@ -503,7 +503,8 @@ class NicotineSetupScreen(Screen):
             yield Static(
                 "[bold]Nicotine+ Integration[/] [dim](optional)[/]\n\n"
                 "Enter the path to your Nicotine+ config folder\n"
-                "(the directory containing the [bold]config[/] file):\n"
+                "(the directory containing the [bold]config[/] file).\n"
+                "[dim]Local mode: path on this machine. Remote mode: path on the remote host.[/]\n"
                 "[dim](Press Escape to skip)[/]",
                 id="nic-setup-prompt",
             )
