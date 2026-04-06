@@ -62,6 +62,22 @@ def get_artists(db_path: str) -> list[tuple]:
         conn.close()
 
 
+def get_album_artists(db_path: str) -> list[tuple]:
+    """Return [(navidrome_id, name, mbz_artist_id)] for album artists with a MusicBrainz ID."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT a.id, a.name, a.mbz_artist_id FROM artist a "
+            "WHERE a.mbz_artist_id != '' "
+            "AND a.id IN (SELECT DISTINCT album_artist_id FROM album) "
+            "ORDER BY a.sort_artist_name"
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
 def get_artists_without_mbid(db_path: str) -> list[tuple]:
     """Return [(navidrome_id, name)] for artists without a MusicBrainz ID."""
     conn = sqlite3.connect(db_path)
@@ -1634,12 +1650,14 @@ class NavidromeGapsApp(App):
         Binding("n", "nicotine_setup", "Nicotine+ Config"),
         Binding("u", "untagged", "Untagged Artists"),
         Binding("l", "similar_artists", "Similar Artists"),
+        Binding("m", "toggle_artist_mode", "Toggle Artist Mode"),
     ]
 
     def __init__(self, db_path: str | None = None):
         super().__init__()
         self.artists: list[tuple] = []
         self._cli_db_path = db_path
+        self._album_artist_mode = True  # Default to album artists only
 
     CSS = """
     #setup-box {
@@ -1815,14 +1833,18 @@ class NavidromeGapsApp(App):
 
     def _load_artists(self) -> None:
         config = load_config()
-        self.artists = get_artists(config["db_path"])
+        if self._album_artist_mode:
+            self.artists = get_album_artists(config["db_path"])
+        else:
+            self.artists = get_artists(config["db_path"])
         self._refresh_table()
 
     def _refresh_table(self, filter_text: str = "") -> None:
         table = self.query_one("#artist-table", DataTable)
         table.clear(columns=True)
         table.cursor_type = "row"
-        table.add_columns("Artist", "MusicBrainz ID")
+        mode_label = "Album Artists" if self._album_artist_mode else "All Artists"
+        table.add_columns(f"Artist ({mode_label})", "MusicBrainz ID")
         ft = filter_text.lower()
         for nid, name, mbid in self.artists:
             if ft and ft not in name.lower():
@@ -1858,6 +1880,14 @@ class NavidromeGapsApp(App):
 
     def _on_untagged_return(self, result) -> None:
         self._load_artists()
+
+    def action_toggle_artist_mode(self) -> None:
+        """Toggle between showing all artists and album artists only."""
+        self._album_artist_mode = not self._album_artist_mode
+        filter_text = self.query_one("#filter-input", Input).value
+        self._load_artists()
+        if filter_text:
+            self._refresh_table(filter_text)
 
     def action_similar_artists(self) -> None:
         """Look up similar artists on Last.fm for the highlighted artist."""

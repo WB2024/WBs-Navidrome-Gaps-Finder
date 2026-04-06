@@ -110,6 +110,7 @@ NDGAPS --db /path/to/navidrome.db
 | `n`       | Configure Nicotine+ config path                  |
 | `u`       | View/fix artists missing MusicBrainz IDs         |
 | `l`       | Find similar artists via Last.fm                 |
+| `m`       | Toggle between Album Artists / All Artists       |
 | `s`       | Change database path                             |
 | `q`       | Quit                                             |
 
