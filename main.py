@@ -458,6 +458,7 @@ class ComparisonScreen(Screen):
         Binding("f", "cycle_filter", "Filter Type"),
         Binding("t", "cycle_secondary", "Sub-filter"),
         Binding("o", "cycle_sort", "Sort"),
+        Binding("l", "similar_artists", "Similar Artists"),
     ]
 
     TYPE_FILTERS = ["All", "Album", "Single", "EP", "Broadcast", "Other"]
@@ -760,6 +761,14 @@ class ComparisonScreen(Screen):
                 f"{f' [dim](of {len(self._missing_data)})[/]' if filtered else ''}"
                 f" · [bold cyan]Added {added} album(s) to Nicotine+ wishlist[/]"
             )
+
+    def action_similar_artists(self) -> None:
+        """Look up similar artists on Last.fm for this artist."""
+        library_mbids: dict[str, tuple[str, str]] = {}
+        for nid, aname, ambid in self.app.artists:
+            if ambid:
+                library_mbids[ambid] = (nid, aname)
+        self.app.push_screen(SimilarArtistsScreen(self.artist_name, self.mbz_artist_id, library_mbids))
 
 
 class LocalTracksScreen(Screen):
@@ -1191,9 +1200,7 @@ class SimilarArtistsScreen(Screen):
             self.app.push_screen(ComparisonScreen(name, nid, mbid))
         else:
             name = art.get("name", "")
-            self.query_one("#similar-status", Static).update(
-                f"[dim]{name} is not in your library.[/]"
-            )
+            self.app.push_screen(ComparisonScreen(name, "", mbid))
 
 
 class UntaggedArtistsScreen(Screen):
