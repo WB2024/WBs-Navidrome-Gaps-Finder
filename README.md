@@ -218,6 +218,29 @@ You can also optionally provide a **Docker container name**. If set, the app wil
 
 This setting is optional and saved to `config.json`. The rest of the app works without it.
 
+### Remote Server Support (SSH)
+
+If Nicotine+ runs on a remote server (e.g. a NAS, a headless Linux box, or a Docker host on another machine), the app can manage the wishlist over SSH.
+
+When pressing `n` to configure Nicotine+, leave the **Remote host** field blank for a local setup. To enable remote mode, fill in:
+
+| Field          | Description                                                              |
+|----------------|--------------------------------------------------------------------------|
+| Remote host    | IP address or hostname of the remote server (e.g. `192.168.1.100`)       |
+| SSH port       | SSH port (default: `22`)                                                 |
+| SSH username   | Your username on the remote server                                       |
+| SSH key path   | *(Optional)* Path to your SSH private key (e.g. `~/.ssh/id_rsa`)        |
+
+For **SSH password authentication**, add your password to the `.env` file:
+
+```
+SSH_PASSWORD=your_ssh_password_here
+```
+
+> **Authentication priority:** The app tries SSH key authentication first (SSH agent → specified key → default keys in `~/.ssh/`). If no key is available, it falls back to the password from `.env`.
+
+The app will test the SSH connection and verify the remote config file exists when you save. Once configured, all wishlist operations (reading, writing, container restart) happen transparently over SSH.
+
 ### Adding to Wishlist
 
 1. View the comparison screen for any artist

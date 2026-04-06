@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import requests
+import paramiko
 from dotenv import load_dotenv
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -175,6 +176,119 @@ def write_nicotine_autosearch(config_dir: str, items: list[str]) -> None:
                 lines.insert(i + 1, f"autosearch = {new_value}{ending}")
                 break
     config_file.write_text("".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# SSH / remote Nicotine+ helpers
+# ---------------------------------------------------------------------------
+
+def _get_ssh_client(config: dict) -> paramiko.SSHClient:
+    """Create and connect an SSH client using stored config + .env credentials."""
+    host = config.get("nicotine_remote_host", "")
+    port = int(config.get("nicotine_remote_port", 22))
+    user = config.get("nicotine_remote_user", "")
+    key_path = config.get("nicotine_remote_key", "")
+    password = os.environ.get("SSH_PASSWORD", "")
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    connect_kwargs: dict = {"hostname": host, "port": port, "username": user}
+    if key_path:
+        connect_kwargs["key_filename"] = key_path
+    elif password:
+        connect_kwargs["password"] = password
+    # If neither key nor password, paramiko will try the SSH agent / default keys
+
+    client.connect(**connect_kwargs, timeout=15)
+    return client
+
+
+def is_remote_nicotine(config: dict) -> bool:
+    """Check whether the Nicotine+ config is on a remote host."""
+    return bool(config.get("nicotine_remote_host", ""))
+
+
+def read_nicotine_autosearch_remote(config: dict) -> list[str]:
+    """Read the autosearch wishlist from a remote Nicotine+ config file via SSH."""
+    config_dir = config.get("nicotine_config_path", "")
+    remote_path = f"{config_dir}/config"
+    client = _get_ssh_client(config)
+    try:
+        sftp = client.open_sftp()
+        with sftp.open(remote_path, "r") as f:
+            text = f.read().decode("utf-8")
+        sftp.close()
+    finally:
+        client.close()
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("autosearch"):
+            _, _, value = stripped.partition("=")
+            value = value.strip()
+            try:
+                result = ast.literal_eval(value)
+                if isinstance(result, list):
+                    return [str(item) for item in result]
+            except (ValueError, SyntaxError):
+                pass
+            return []
+    return []
+
+
+def write_nicotine_autosearch_remote(config: dict, items: list[str]) -> None:
+    """Write the autosearch wishlist to a remote Nicotine+ config file via SSH."""
+    config_dir = config.get("nicotine_config_path", "")
+    remote_path = f"{config_dir}/config"
+    client = _get_ssh_client(config)
+    try:
+        sftp = client.open_sftp()
+        with sftp.open(remote_path, "r") as f:
+            text = f.read().decode("utf-8")
+
+        lines = text.splitlines(keepends=True)
+        new_value = repr(items)
+        found = False
+        for i, line in enumerate(lines):
+            if line.strip().startswith("autosearch"):
+                ending = "\n"
+                if line.endswith("\r\n"):
+                    ending = "\r\n"
+                elif not line.endswith("\n"):
+                    ending = ""
+                lines[i] = f"autosearch = {new_value}{ending}"
+                found = True
+                break
+        if not found:
+            for i, line in enumerate(lines):
+                if line.strip() == "[server]":
+                    ending = "\n"
+                    if line.endswith("\r\n"):
+                        ending = "\r\n"
+                    lines.insert(i + 1, f"autosearch = {new_value}{ending}")
+                    break
+
+        with sftp.open(remote_path, "w") as f:
+            f.write("".join(lines).encode("utf-8"))
+        sftp.close()
+    finally:
+        client.close()
+
+
+def restart_container_remote(config: dict, container: str) -> None:
+    """Restart a Docker container on the remote host via SSH."""
+    client = _get_ssh_client(config)
+    try:
+        _, stdout, stderr = client.exec_command(
+            f"docker restart {container}", timeout=30
+        )
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code != 0:
+            err_msg = stderr.read().decode(errors="replace").strip()
+            raise RuntimeError(err_msg or f"docker restart exited with code {exit_code}")
+    finally:
+        client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -401,8 +515,33 @@ class NicotineSetupScreen(Screen):
                 id="nic-docker-prompt",
             )
             yield Input(placeholder="e.g. nicotine-plus", id="nic-docker-input")
+            yield Static(
+                "\n[bold]Remote host[/] [dim](leave blank if Nicotine+ is on this machine)[/]\n"
+                "If Nicotine+ runs on a remote server, enter the SSH connection details below.\n"
+                "SSH password or key can be configured in the [bold].env[/] file.",
+                id="nic-remote-prompt",
+            )
+            yield Input(placeholder="e.g. 192.168.1.100 or nas.local", id="nic-ssh-host")
+            yield Input(placeholder="SSH port (default: 22)", id="nic-ssh-port")
+            yield Input(placeholder="SSH username", id="nic-ssh-user")
+            yield Input(placeholder="SSH key path (optional, e.g. ~/.ssh/id_rsa)", id="nic-ssh-key")
             yield Static("", id="nic-setup-error")
         yield Footer()
+
+    def on_mount(self) -> None:
+        config = load_config()
+        if config.get("nicotine_config_path"):
+            self.query_one("#nic-input", Input).value = config.get("nicotine_config_path", "")
+        if config.get("nicotine_container"):
+            self.query_one("#nic-docker-input", Input).value = config.get("nicotine_container", "")
+        if config.get("nicotine_remote_host"):
+            self.query_one("#nic-ssh-host", Input).value = config.get("nicotine_remote_host", "")
+        if config.get("nicotine_remote_port"):
+            self.query_one("#nic-ssh-port", Input).value = str(config.get("nicotine_remote_port", ""))
+        if config.get("nicotine_remote_user"):
+            self.query_one("#nic-ssh-user", Input).value = config.get("nicotine_remote_user", "")
+        if config.get("nicotine_remote_key"):
+            self.query_one("#nic-ssh-key", Input).value = config.get("nicotine_remote_key", "")
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -413,37 +552,107 @@ class NicotineSetupScreen(Screen):
 
     @on(Input.Submitted, "#nic-docker-input")
     def on_docker_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#nic-ssh-host", Input).focus()
+
+    @on(Input.Submitted, "#nic-ssh-host")
+    def on_ssh_host_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#nic-ssh-port", Input).focus()
+
+    @on(Input.Submitted, "#nic-ssh-port")
+    def on_ssh_port_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#nic-ssh-user", Input).focus()
+
+    @on(Input.Submitted, "#nic-ssh-user")
+    def on_ssh_user_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#nic-ssh-key", Input).focus()
+
+    @on(Input.Submitted, "#nic-ssh-key")
+    def on_ssh_key_submitted(self, event: Input.Submitted) -> None:
         self._save()
 
     def _save(self) -> None:
         path = self.query_one("#nic-input", Input).value.strip().strip('"').strip("'")
         err = self.query_one("#nic-setup-error", Static)
+        ssh_host = self.query_one("#nic-ssh-host", Input).value.strip()
 
         if not path:
             err.update("[red]Please enter a path or press Escape to skip.[/]")
             return
 
-        p = Path(path)
-        if not p.exists():
-            err.update(f"[red]Directory not found: {path}[/]")
-            return
-        if not p.is_dir():
-            err.update(f"[red]Not a directory: {path}[/]")
-            return
-
-        config_file = p / "config"
-        if not config_file.exists():
-            err.update(f"[red]No 'config' file found in {path}[/]")
-            return
+        if not ssh_host:
+            # Local mode — validate path exists
+            p = Path(path)
+            if not p.exists():
+                err.update(f"[red]Directory not found: {path}[/]")
+                return
+            if not p.is_dir():
+                err.update(f"[red]Not a directory: {path}[/]")
+                return
+            config_file = p / "config"
+            if not config_file.exists():
+                err.update(f"[red]No 'config' file found in {path}[/]")
+                return
 
         container = self.query_one("#nic-docker-input", Input).value.strip()
+        ssh_port = self.query_one("#nic-ssh-port", Input).value.strip() or "22"
+        ssh_user = self.query_one("#nic-ssh-user", Input).value.strip()
+        ssh_key = self.query_one("#nic-ssh-key", Input).value.strip().strip('"').strip("'")
+
+        if ssh_host:
+            if not ssh_user:
+                err.update("[red]SSH username is required for remote connections.[/]")
+                return
+            try:
+                port_int = int(ssh_port)
+            except ValueError:
+                err.update("[red]SSH port must be a number.[/]")
+                return
+            # Test the SSH connection
+            test_config = {
+                "nicotine_remote_host": ssh_host,
+                "nicotine_remote_port": port_int,
+                "nicotine_remote_user": ssh_user,
+                "nicotine_remote_key": ssh_key,
+            }
+            try:
+                client = _get_ssh_client(test_config)
+                # Verify remote config file exists
+                sftp = client.open_sftp()
+                remote_config = f"{path}/config"
+                try:
+                    sftp.stat(remote_config)
+                except FileNotFoundError:
+                    sftp.close()
+                    client.close()
+                    err.update(f"[red]No 'config' file found at {remote_config} on remote host.[/]")
+                    return
+                sftp.close()
+                client.close()
+            except Exception as exc:
+                err.update(f"[red]SSH connection failed: {exc}[/]")
+                return
 
         config = load_config()
-        config["nicotine_config_path"] = str(p.resolve())
+        config["nicotine_config_path"] = str(Path(path).resolve()) if not ssh_host else path
         if container:
             config["nicotine_container"] = container
         else:
             config.pop("nicotine_container", None)
+
+        if ssh_host:
+            config["nicotine_remote_host"] = ssh_host
+            config["nicotine_remote_port"] = int(ssh_port)
+            config["nicotine_remote_user"] = ssh_user
+            if ssh_key:
+                config["nicotine_remote_key"] = ssh_key
+            else:
+                config.pop("nicotine_remote_key", None)
+        else:
+            # Clear remote settings if switching to local
+            for key in ("nicotine_remote_host", "nicotine_remote_port",
+                        "nicotine_remote_user", "nicotine_remote_key"):
+                config.pop(key, None)
+
         save_config(config)
         self.dismiss(True)
 
@@ -1019,8 +1228,12 @@ class WishlistScreen(Screen):
         config = load_config()
         nic_path = config.get("nicotine_config_path", "")
         container = config.get("nicotine_container", "")
+        remote = is_remote_nicotine(config)
 
-        existing = read_nicotine_autosearch(nic_path)
+        if remote:
+            existing = read_nicotine_autosearch_remote(config)
+        else:
+            existing = read_nicotine_autosearch(nic_path)
         existing_lower = {item.lower() for item in existing}
 
         added = 0
@@ -1038,34 +1251,47 @@ class WishlistScreen(Screen):
             )
             return
 
-        write_nicotine_autosearch(nic_path, existing)
+        if remote:
+            write_nicotine_autosearch_remote(config, existing)
+        else:
+            write_nicotine_autosearch(nic_path, existing)
 
         if container:
             self.query_one("#wishlist-status", Static).update(
                 f"[cyan]Added {added} album(s). Restarting Nicotine+ container…[/]"
             )
-            self._restart_container(container, added)
+            self._restart_container(container, added, remote, config)
         else:
             self.dismiss(added)
 
     @work(thread=True)
-    def _restart_container(self, container: str, added: int) -> None:
+    def _restart_container(self, container: str, added: int,
+                           remote: bool = False, config: dict | None = None) -> None:
         try:
-            subprocess.run(
-                ["docker", "restart", container],
-                check=True,
-                capture_output=True,
-                timeout=30,
-            )
+            if remote and config:
+                restart_container_remote(config, container)
+            else:
+                subprocess.run(
+                    ["docker", "restart", container],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
         except FileNotFoundError:
             self.app.call_from_thread(self._show_restart_error, added, "docker command not found")
             return
         except subprocess.TimeoutExpired:
             self.app.call_from_thread(self._show_restart_error, added, "container restart timed out")
             return
-        except subprocess.CalledProcessError as exc:
-            msg = exc.stderr.decode(errors="replace").strip() if exc.stderr else str(exc)
+        except (subprocess.CalledProcessError, RuntimeError) as exc:
+            if isinstance(exc, subprocess.CalledProcessError):
+                msg = exc.stderr.decode(errors="replace").strip() if exc.stderr else str(exc)
+            else:
+                msg = str(exc)
             self.app.call_from_thread(self._show_restart_error, added, msg)
+            return
+        except Exception as exc:
+            self.app.call_from_thread(self._show_restart_error, added, str(exc))
             return
         self.app.call_from_thread(self.dismiss, added)
 
