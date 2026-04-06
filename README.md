@@ -298,6 +298,28 @@ Discover new music by finding artists similar to the ones already in your librar
 - Matching is done at the **release group** level (i.e. the album concept, not individual pressings/editions).
 - Only artists with a `mbz_artist_id` in your Navidrome database are shown. Ensure your music files are properly tagged with MusicBrainz IDs for best results.
 
+## Troubleshooting
+
+### `OperationalError: disk I/O error` when using a Docker/NAS database
+
+If your Navidrome database lives inside a Docker volume (e.g. on an OMV7 or similar NAS setup), the file may be owned by root or a container UID, making it unreadable by your user account — or it may be locked by the running Navidrome container.
+
+The recommended fix is to copy the database to your home directory first:
+
+```bash
+sudo cp /srv/OMV7DockerAppData/m-nd-c/navidrome.db ~/navidrome.db
+sudo chown $USER:$USER ~/navidrome.db
+NDGAPS --db ~/navidrome.db
+```
+
+> **Note:** Working from a copy is safer than pointing directly at the live file — SQLite can produce I/O errors if Navidrome has the database locked while running. The copy is opened read-only by this app, so there is no risk of corrupting your library.
+
+If you prefer to grant direct read access to the original file instead:
+
+```bash
+sudo chmod o+r /srv/OMV7DockerAppData/m-nd-c/navidrome.db
+```
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
